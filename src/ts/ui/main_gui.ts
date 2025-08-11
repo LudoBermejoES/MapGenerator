@@ -73,6 +73,7 @@ export default class MainGUI {
             },
             riverBankSize: 10,
             riverSize: 30,
+            numRivers: 1,
         }, this.minorParams);
         this.coastlineParams.pathIterations = 10000;
         this.coastlineParams.simplifyTolerance = 10;
@@ -264,7 +265,11 @@ export default class MainGUI {
 
         style.seaPolygon = this.coastline.seaPolygon;
         style.coastline = this.coastline.coastline;
+        style.rivers = this.coastline.rivers;
+        style.secondaryRivers = this.coastline.secondaryRivers;
+        // Backward compatibility
         style.river = this.coastline.river;
+        style.secondaryRiver = this.coastline.secondaryRiver;
         style.lots = this.buildings.lots;
 
         if (style instanceof DefaultStyle && style.showBuildingModels || style instanceof RoughStyle) {
@@ -293,6 +298,10 @@ export default class MainGUI {
 
     public get seaPolygon(): Vector[] {
         return this.coastline.seaPolygon;
+    }
+
+    public get riverPolygons(): Vector[][] {
+        return this.coastline.rivers;
     }
 
     public get riverPolygon(): Vector[] {

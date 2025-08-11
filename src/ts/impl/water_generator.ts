@@ -11,6 +11,7 @@ export interface WaterParams extends StreamlineParams {
     riverNoise: NoiseStreamlineParams;
     riverBankSize: number;
     riverSize: number;
+    numRivers: number;
 }
 
 export interface NoiseStreamlineParams {
@@ -27,8 +28,8 @@ export default class WaterGenerator extends StreamlineGenerator {
     private coastlineMajor = true;
     private _coastline: Vector[] = [];  // Noisy line
     private _seaPolygon: Vector[] = [];  // Uses screen rectangle and simplified road
-    private _riverPolygon: Vector[] = []; // Simplified
-    private _riverSecondaryRoad: Vector[] = [];
+    private _riverPolygons: Vector[][] = []; // Simplified
+    private _riverSecondaryRoads: Vector[][] = [];
 
     constructor(integrator: FieldIntegrator,
                 origin: Vector,
@@ -46,12 +47,21 @@ export default class WaterGenerator extends StreamlineGenerator {
         return this._seaPolygon;
     }
 
+    get riverPolygons(): Vector[][] {
+        return this._riverPolygons;
+    }
+
+    get riverSecondaryRoads(): Vector[][] {
+        return this._riverSecondaryRoads;
+    }
+
+    // Backward compatibility - returns first river or empty array
     get riverPolygon(): Vector[] {
-        return this._riverPolygon;
+        return this._riverPolygons.length > 0 ? this._riverPolygons[0] : [];
     }
 
     get riverSecondaryRoad(): Vector[] {
-        return this._riverSecondaryRoad;
+        return this._riverSecondaryRoads.length > 0 ? this._riverSecondaryRoads[0] : [];
     }
 
     createCoast(): void {
@@ -89,31 +99,73 @@ export default class WaterGenerator extends StreamlineGenerator {
     }
 
     createRiver(): void {
-        let riverStreamline;
-        let seed;
+        // Clear previous rivers
+        this._riverPolygons = [];
+        this._riverSecondaryRoads = [];
+
+        if (this.params.numRivers <= 0) {
+            this.tensorField.river = [];
+            return;
+        }
 
         // Need to ignore sea when integrating for edge check
         const oldSea = this.tensorField.sea;
         this.tensorField.sea = [];
+        
+        const allRiverRoads: Vector[] = [];
+
+        for (let riverIndex = 0; riverIndex < this.params.numRivers; riverIndex++) {
+            const riverResult = this.createSingleRiver(riverIndex);
+            if (riverResult) {
+                this._riverPolygons.push(riverResult.riverPolygon);
+                this._riverSecondaryRoads.push(riverResult.secondaryRoad);
+                allRiverRoads.push(...riverResult.road1Simple, ...riverResult.road2Simple);
+                
+                // Add to grids and streamlines
+                this.grid(!this.coastlineMajor).addPolyline(riverResult.road1);
+                this.grid(!this.coastlineMajor).addPolyline(riverResult.road2);
+                this.streamlines(!this.coastlineMajor).push(riverResult.road1);
+                this.streamlines(!this.coastlineMajor).push(riverResult.road2);
+                this.allStreamlines.push(riverResult.road1);
+                this.allStreamlines.push(riverResult.road2);
+                this.allStreamlinesSimple.push(riverResult.road1Simple);
+            }
+        }
+
+        this.tensorField.sea = oldSea;
+        this.tensorField.river = allRiverRoads;
+    }
+
+    private createSingleRiver(riverIndex: number): {riverPolygon: Vector[], secondaryRoad: Vector[], road1Simple: Vector[], road2Simple: Vector[], road1: Vector[], road2: Vector[]} | null {
+        let riverStreamline;
+        let seed;
+
         if (this.params.riverNoise.noiseEnabled) {
             this.tensorField.enableGlobalNoise(this.params.riverNoise.noiseAngle, this.params.riverNoise.noiseSize);    
-        }        
+        }
+
+        // Try to find a river that reaches edges
         for (let i = 0; i < this.TRIES; i++) {
-            seed = this.getSeed(!this.coastlineMajor);
-            riverStreamline = this.extendStreamline(this.integrateStreamline(seed, !this.coastlineMajor));
+            // Use different major/minor direction for variety
+            const useMinor = riverIndex % 2 === 0 ? !this.coastlineMajor : this.coastlineMajor;
+            seed = this.getSeed(useMinor);
+            riverStreamline = this.extendStreamline(this.integrateStreamline(seed, useMinor));
 
             if (this.reachesEdges(riverStreamline)) {
                 break;
             } else if (i === this.TRIES - 1) {
-                log.error('Failed to find river reaching edge');
+                log.error(`Failed to find river ${riverIndex + 1} reaching edge`);
+                this.tensorField.disableGlobalNoise();
+                return null;
             }
         }
-        this.tensorField.sea = oldSea;
+        
         this.tensorField.disableGlobalNoise();
 
         // Create river roads
         const expandedNoisy = this.complexifyStreamline(PolygonUtil.resizeGeometry(riverStreamline, this.params.riverSize, false));
-        this._riverPolygon = PolygonUtil.resizeGeometry(riverStreamline, this.params.riverSize - this.params.riverBankSize, false);
+        const riverPolygon = PolygonUtil.resizeGeometry(riverStreamline, this.params.riverSize - this.params.riverBankSize, false);
+        
         // Make sure riverPolygon[0] is off screen
         const firstOffScreen = expandedNoisy.findIndex(v => this.vectorOffScreen(v));
         for (let i = 0; i < firstOffScreen; i++) {
@@ -133,24 +185,23 @@ export default class WaterGenerator extends StreamlineGenerator {
             && !PolygonUtil.insidePolygon(v, riverSplitPoly));
         const road2Simple = this.simplifyStreamline(road2);
 
-        if (road1.length === 0 || road2.length === 0) return;
+        if (road1.length === 0 || road2.length === 0) {
+            log.warn(`River ${riverIndex + 1} failed to generate valid roads`);
+            return null;
+        }
 
         if (road1[0].distanceToSquared(road2[0]) < road1[0].distanceToSquared(road2[road2.length - 1])) {
             road2Simple.reverse();
         }
 
-        this.tensorField.river = road1Simple.concat(road2Simple);
-
-        // Road 1
-        this.allStreamlinesSimple.push(road1Simple);
-        this._riverSecondaryRoad = road2Simple;
-
-        this.grid(!this.coastlineMajor).addPolyline(road1);
-        this.grid(!this.coastlineMajor).addPolyline(road2);
-        this.streamlines(!this.coastlineMajor).push(road1);
-        this.streamlines(!this.coastlineMajor).push(road2);
-        this.allStreamlines.push(road1);
-        this.allStreamlines.push(road2);
+        return {
+            riverPolygon,
+            secondaryRoad: road2Simple,
+            road1Simple,
+            road2Simple,
+            road1,
+            road2
+        };
     }
 
     /**

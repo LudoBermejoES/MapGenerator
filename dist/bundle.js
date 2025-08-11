@@ -12448,20 +12448,27 @@
     // Noisy line
     _seaPolygon = [];
     // Uses screen rectangle and simplified road
-    _riverPolygon = [];
+    _riverPolygons = [];
     // Simplified
-    _riverSecondaryRoad = [];
+    _riverSecondaryRoads = [];
     get coastline() {
       return this._coastline;
     }
     get seaPolygon() {
       return this._seaPolygon;
     }
+    get riverPolygons() {
+      return this._riverPolygons;
+    }
+    get riverSecondaryRoads() {
+      return this._riverSecondaryRoads;
+    }
+    // Backward compatibility - returns first river or empty array
     get riverPolygon() {
-      return this._riverPolygon;
+      return this._riverPolygons.length > 0 ? this._riverPolygons[0] : [];
     }
     get riverSecondaryRoad() {
-      return this._riverSecondaryRoad;
+      return this._riverSecondaryRoads.length > 0 ? this._riverSecondaryRoads[0] : [];
     }
     createCoast() {
       let coastStreamline;
@@ -12491,26 +12498,54 @@
       this.allStreamlines.push(complex);
     }
     createRiver() {
-      let riverStreamline;
-      let seed;
+      this._riverPolygons = [];
+      this._riverSecondaryRoads = [];
+      if (this.params.numRivers <= 0) {
+        this.tensorField.river = [];
+        return;
+      }
       const oldSea = this.tensorField.sea;
       this.tensorField.sea = [];
+      const allRiverRoads = [];
+      for (let riverIndex = 0; riverIndex < this.params.numRivers; riverIndex++) {
+        const riverResult = this.createSingleRiver(riverIndex);
+        if (riverResult) {
+          this._riverPolygons.push(riverResult.riverPolygon);
+          this._riverSecondaryRoads.push(riverResult.secondaryRoad);
+          allRiverRoads.push(...riverResult.road1Simple, ...riverResult.road2Simple);
+          this.grid(!this.coastlineMajor).addPolyline(riverResult.road1);
+          this.grid(!this.coastlineMajor).addPolyline(riverResult.road2);
+          this.streamlines(!this.coastlineMajor).push(riverResult.road1);
+          this.streamlines(!this.coastlineMajor).push(riverResult.road2);
+          this.allStreamlines.push(riverResult.road1);
+          this.allStreamlines.push(riverResult.road2);
+          this.allStreamlinesSimple.push(riverResult.road1Simple);
+        }
+      }
+      this.tensorField.sea = oldSea;
+      this.tensorField.river = allRiverRoads;
+    }
+    createSingleRiver(riverIndex) {
+      let riverStreamline;
+      let seed;
       if (this.params.riverNoise.noiseEnabled) {
         this.tensorField.enableGlobalNoise(this.params.riverNoise.noiseAngle, this.params.riverNoise.noiseSize);
       }
       for (let i = 0; i < this.TRIES; i++) {
-        seed = this.getSeed(!this.coastlineMajor);
-        riverStreamline = this.extendStreamline(this.integrateStreamline(seed, !this.coastlineMajor));
+        const useMinor = riverIndex % 2 === 0 ? !this.coastlineMajor : this.coastlineMajor;
+        seed = this.getSeed(useMinor);
+        riverStreamline = this.extendStreamline(this.integrateStreamline(seed, useMinor));
         if (this.reachesEdges(riverStreamline)) {
           break;
         } else if (i === this.TRIES - 1) {
-          log5.error("Failed to find river reaching edge");
+          log5.error(`Failed to find river ${riverIndex + 1} reaching edge`);
+          this.tensorField.disableGlobalNoise();
+          return null;
         }
       }
-      this.tensorField.sea = oldSea;
       this.tensorField.disableGlobalNoise();
       const expandedNoisy = this.complexifyStreamline(PolygonUtil.resizeGeometry(riverStreamline, this.params.riverSize, false));
-      this._riverPolygon = PolygonUtil.resizeGeometry(riverStreamline, this.params.riverSize - this.params.riverBankSize, false);
+      const riverPolygon = PolygonUtil.resizeGeometry(riverStreamline, this.params.riverSize - this.params.riverBankSize, false);
       const firstOffScreen = expandedNoisy.findIndex((v) => this.vectorOffScreen(v));
       for (let i = 0; i < firstOffScreen; i++) {
         expandedNoisy.push(expandedNoisy.shift());
@@ -12520,19 +12555,21 @@
       const road1Simple = this.simplifyStreamline(road1);
       const road2 = expandedNoisy.filter((v) => !PolygonUtil.insidePolygon(v, this._seaPolygon) && !this.vectorOffScreen(v) && !PolygonUtil.insidePolygon(v, riverSplitPoly));
       const road2Simple = this.simplifyStreamline(road2);
-      if (road1.length === 0 || road2.length === 0) return;
+      if (road1.length === 0 || road2.length === 0) {
+        log5.warn(`River ${riverIndex + 1} failed to generate valid roads`);
+        return null;
+      }
       if (road1[0].distanceToSquared(road2[0]) < road1[0].distanceToSquared(road2[road2.length - 1])) {
         road2Simple.reverse();
       }
-      this.tensorField.river = road1Simple.concat(road2Simple);
-      this.allStreamlinesSimple.push(road1Simple);
-      this._riverSecondaryRoad = road2Simple;
-      this.grid(!this.coastlineMajor).addPolyline(road1);
-      this.grid(!this.coastlineMajor).addPolyline(road2);
-      this.streamlines(!this.coastlineMajor).push(road1);
-      this.streamlines(!this.coastlineMajor).push(road2);
-      this.allStreamlines.push(road1);
-      this.allStreamlines.push(road2);
+      return {
+        riverPolygon,
+        secondaryRoad: road2Simple,
+        road1Simple,
+        road2Simple,
+        road1,
+        road2
+      };
     }
     /**
      * Assumes simplified
@@ -12615,6 +12652,7 @@
       coastParamsFolder.add(this.params.coastNoise, "noiseSize");
       coastParamsFolder.add(this.params.coastNoise, "noiseAngle");
       const riverParamsFolder = folder.addFolder("RiverParams");
+      riverParamsFolder.add(this.params, "numRivers").min(0).max(10).step(1);
       riverParamsFolder.add(this.params.riverNoise, "noiseEnabled");
       riverParamsFolder.add(this.params.riverNoise, "noiseSize");
       riverParamsFolder.add(this.params.riverNoise, "noiseAngle");
@@ -12646,14 +12684,29 @@
      */
     get streamlinesWithSecondaryRoad() {
       const withSecondary = this.streamlines.allStreamlinesSimple.slice();
-      withSecondary.push(this.streamlines.riverSecondaryRoad);
+      this.streamlines.riverSecondaryRoads.forEach((road) => {
+        withSecondary.push(road);
+      });
       return withSecondary;
     }
+    get rivers() {
+      return this.streamlines.riverPolygons.map(
+        (river) => river.map((v) => this.domainController.worldToScreen(v.clone()))
+      );
+    }
+    get secondaryRivers() {
+      return this.streamlines.riverSecondaryRoads.map(
+        (road) => road.map((v) => this.domainController.worldToScreen(v.clone()))
+      );
+    }
+    // Backward compatibility - returns first river or empty array
     get river() {
-      return this.streamlines.riverPolygon.map((v) => this.domainController.worldToScreen(v.clone()));
+      const rivers = this.rivers;
+      return rivers.length > 0 ? rivers[0] : [];
     }
     get secondaryRiver() {
-      return this.streamlines.riverSecondaryRoad.map((v) => this.domainController.worldToScreen(v.clone()));
+      const secondaryRivers = this.secondaryRivers;
+      return secondaryRivers.length > 0 ? secondaryRivers[0] : [];
     }
     get coastline() {
       return this.streamlines.coastline.map((v) => this.domainController.worldToScreen(v.clone()));
@@ -18712,6 +18765,9 @@
     parks = [];
     // Polylines
     coastline = [];
+    rivers = [];
+    secondaryRivers = [];
+    // Backward compatibility
     river = [];
     secondaryRiver = [];
     minorRoads = [];
@@ -18769,14 +18825,24 @@
       canvas.setFillStyle(this.colourScheme.seaColour);
       canvas.setStrokeStyle(this.colourScheme.seaColour);
       canvas.setLineWidth(1);
-      canvas.drawPolygon(this.river);
+      for (const river of this.rivers) {
+        canvas.drawPolygon(river);
+      }
+      if (this.river.length > 0) {
+        canvas.drawPolygon(this.river);
+      }
       canvas.setStrokeStyle(this.colourScheme.minorRoadOutline);
       canvas.setLineWidth(this.colourScheme.outlineSize + this.colourScheme.minorWidth * this.domainController.zoom);
       for (const s of this.minorRoads) canvas.drawPolyline(s);
       canvas.setStrokeStyle(this.colourScheme.majorRoadOutline);
       canvas.setLineWidth(this.colourScheme.outlineSize + this.colourScheme.majorWidth * this.domainController.zoom);
       for (const s of this.majorRoads) canvas.drawPolyline(s);
-      canvas.drawPolyline(this.secondaryRiver);
+      for (const secondaryRiver of this.secondaryRivers) {
+        canvas.drawPolyline(secondaryRiver);
+      }
+      if (this.secondaryRiver.length > 0) {
+        canvas.drawPolyline(this.secondaryRiver);
+      }
       canvas.setStrokeStyle(this.colourScheme.mainRoadOutline);
       canvas.setLineWidth(this.colourScheme.outlineSize + this.colourScheme.mainWidth * this.domainController.zoom);
       for (const s of this.mainRoads) canvas.drawPolyline(s);
@@ -18869,7 +18935,12 @@
         stroke: "none",
         strokeWidth: 1
       });
-      canvas.drawPolygon(this.river);
+      for (const river of this.rivers) {
+        canvas.drawPolygon(river);
+      }
+      if (this.river.length > 0) {
+        canvas.drawPolygon(this.river);
+      }
       canvas.setOptions({
         fill: this.colourScheme.grassColour
       });
@@ -19085,7 +19156,8 @@
           noiseAngle: 20
         },
         riverBankSize: 10,
-        riverSize: 30
+        riverSize: 30,
+        numRivers: 1
       }, this.minorParams);
       this.coastlineParams.pathIterations = 1e4;
       this.coastlineParams.simplifyTolerance = 10;
@@ -19286,7 +19358,10 @@
       this.redraw = false;
       style.seaPolygon = this.coastline.seaPolygon;
       style.coastline = this.coastline.coastline;
+      style.rivers = this.coastline.rivers;
+      style.secondaryRivers = this.coastline.secondaryRivers;
       style.river = this.coastline.river;
+      style.secondaryRiver = this.coastline.secondaryRiver;
       style.lots = this.buildings.lots;
       if (style instanceof DefaultStyle && style.showBuildingModels || style instanceof RoughStyle) {
         style.buildingModels = this.buildings.models;
@@ -19307,6 +19382,9 @@
     // OBJ Export methods
     get seaPolygon() {
       return this.coastline.seaPolygon;
+    }
+    get riverPolygons() {
+      return this.coastline.rivers;
     }
     get riverPolygon() {
       return this.coastline.river;

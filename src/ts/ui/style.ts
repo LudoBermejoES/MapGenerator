@@ -50,6 +50,9 @@ export default abstract class Style {
 
     // Polylines
     public coastline: Vector[] = [];
+    public rivers: Vector[][] = [];
+    public secondaryRivers: Vector[][] = [];
+    // Backward compatibility
     public river: Vector[] = [];
     public secondaryRiver: Vector[] = [];
     public minorRoads: Vector[][] = [];
@@ -156,11 +159,17 @@ export class DefaultStyle extends Style {
         canvas.setFillStyle(this.colourScheme.grassColour);
         for (const p of this.parks) canvas.drawPolygon(p);
 
-        // River
+        // Rivers
         canvas.setFillStyle(this.colourScheme.seaColour);
         canvas.setStrokeStyle(this.colourScheme.seaColour);
         canvas.setLineWidth(1);
-        canvas.drawPolygon(this.river);
+        for (const river of this.rivers) {
+            canvas.drawPolygon(river);
+        }
+        // Backward compatibility
+        if (this.river.length > 0) {
+            canvas.drawPolygon(this.river);
+        }
 
         // Road outline
         canvas.setStrokeStyle(this.colourScheme.minorRoadOutline);
@@ -170,7 +179,14 @@ export class DefaultStyle extends Style {
         canvas.setStrokeStyle(this.colourScheme.majorRoadOutline);
         canvas.setLineWidth(this.colourScheme.outlineSize + this.colourScheme.majorWidth * this.domainController.zoom);
         for (const s of this.majorRoads) canvas.drawPolyline(s);
-        canvas.drawPolyline(this.secondaryRiver);
+        // Secondary rivers
+        for (const secondaryRiver of this.secondaryRivers) {
+            canvas.drawPolyline(secondaryRiver);
+        }
+        // Backward compatibility
+        if (this.secondaryRiver.length > 0) {
+            canvas.drawPolyline(this.secondaryRiver);
+        }
 
         canvas.setStrokeStyle(this.colourScheme.mainRoadOutline);
         canvas.setLineWidth(this.colourScheme.outlineSize + this.colourScheme.mainWidth * this.domainController.zoom);
@@ -295,7 +311,14 @@ export class RoughStyle extends Style {
             strokeWidth: 1,
         });
 
-        canvas.drawPolygon(this.river);
+        // Draw all rivers
+        for (const river of this.rivers) {
+            canvas.drawPolygon(river);
+        }
+        // Backward compatibility
+        if (this.river.length > 0) {
+            canvas.drawPolygon(this.river);
+        }
 
         // Parks
         canvas.setOptions({

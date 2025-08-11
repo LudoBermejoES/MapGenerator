@@ -42,6 +42,7 @@ export default class WaterGUI extends RoadGUI {
         coastParamsFolder.add(this.params.coastNoise, 'noiseSize');
         coastParamsFolder.add(this.params.coastNoise, 'noiseAngle');
         const riverParamsFolder = folder.addFolder('RiverParams');
+        riverParamsFolder.add(this.params, 'numRivers').min(0).max(10).step(1);
         riverParamsFolder.add(this.params.riverNoise, 'noiseEnabled');
         riverParamsFolder.add(this.params.riverNoise, 'noiseSize');
         riverParamsFolder.add(this.params.riverNoise, 'noiseAngle');
@@ -76,16 +77,34 @@ export default class WaterGUI extends RoadGUI {
      */
     get streamlinesWithSecondaryRoad(): Vector[][] {
         const withSecondary = this.streamlines.allStreamlinesSimple.slice();
-        withSecondary.push(this.streamlines.riverSecondaryRoad);
+        // Add all secondary roads
+        this.streamlines.riverSecondaryRoads.forEach(road => {
+            withSecondary.push(road);
+        });
         return withSecondary;
     }
 
+    get rivers(): Vector[][] {
+        return this.streamlines.riverPolygons.map(river =>
+            river.map(v => this.domainController.worldToScreen(v.clone()))
+        );
+    }
+
+    get secondaryRivers(): Vector[][] {
+        return this.streamlines.riverSecondaryRoads.map(road =>
+            road.map(v => this.domainController.worldToScreen(v.clone()))
+        );
+    }
+
+    // Backward compatibility - returns first river or empty array
     get river(): Vector[] {
-        return this.streamlines.riverPolygon.map(v => this.domainController.worldToScreen(v.clone()));
+        const rivers = this.rivers;
+        return rivers.length > 0 ? rivers[0] : [];
     }
 
     get secondaryRiver(): Vector[] {
-        return this.streamlines.riverSecondaryRoad.map(v => this.domainController.worldToScreen(v.clone()));
+        const secondaryRivers = this.secondaryRivers;
+        return secondaryRivers.length > 0 ? secondaryRivers[0] : [];
     }
 
     get coastline(): Vector[] {

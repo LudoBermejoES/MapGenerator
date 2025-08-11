@@ -1,8 +1,6 @@
-import * as log from 'loglevel';
 import DomainController from './domain_controller';
 import TensorField from '../impl/tensor_field';
 import {RK4Integrator} from '../impl/integrator';
-import FieldIntegrator from '../impl/integrator';
 import {StreamlineParams} from '../impl/streamlines';
 import {WaterParams} from '../impl/water_generator';
 import Graph from '../impl/graph';
@@ -10,9 +8,6 @@ import RoadGUI from './road_gui';
 import WaterGUI from './water_gui';
 import Vector from '../vector';
 import PolygonFinder from '../impl/polygon_finder';
-import {PolygonParams} from '../impl/polygon_finder';
-import StreamlineGenerator from '../impl/streamlines';
-import WaterGenerator from '../impl/water_generator';
 import Style from './style';
 import {DefaultStyle, RoughStyle} from './style';
 import CanvasWrapper from './canvas_wrapper';
@@ -62,8 +57,8 @@ export default class MainGUI {
     constructor(private guiFolder: dat.GUI, private tensorField: TensorField, private closeTensorFolder: () => void) {
         guiFolder.add(this, 'generateEverything');
         // guiFolder.add(this, 'simpleBenchMark');
-        const animateController = guiFolder.add(this, 'animate');
-        guiFolder.add(this, 'animationSpeed');
+        const animateController = guiFolder.add(this, 'animate' as any);
+        guiFolder.add(this, 'animationSpeed' as any);
 
         this.coastlineParams = Object.assign({
             coastNoise: {
@@ -109,9 +104,9 @@ export default class MainGUI {
             this.addParks();
             this.redraw = true;
         }}, 'Generate');
-        parks.add(this, 'clusterBigParks');
-        parks.add(this, 'numBigParks');
-        parks.add(this, 'numSmallParks');
+        parks.add(this, 'clusterBigParks' as any);
+        parks.add(this, 'numBigParks' as any);
+        parks.add(this, 'numSmallParks' as any);
 
         const buildingsFolder = guiFolder.addFolder('Buildings');
         this.buildings = new Buildings(tensorField, buildingsFolder, redraw, this.minorParams.dstep, this.animate);

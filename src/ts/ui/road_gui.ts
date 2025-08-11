@@ -1,5 +1,3 @@
-import * as log from 'loglevel';
-import CanvasWrapper from './canvas_wrapper';
 import DomainController from './domain_controller';
 import Util from '../util';
 import FieldIntegrator from '../impl/integrator';

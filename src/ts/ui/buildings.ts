@@ -1,4 +1,3 @@
-import * as log from 'loglevel';
 import DomainController from './domain_controller';
 import TensorField from '../impl/tensor_field';
 import Graph from '../impl/graph';
@@ -82,8 +81,8 @@ export default class Buildings {
     private polygonFinder: PolygonFinder;
     private allStreamlines: Vector[][] = [];
     private domainController = DomainController.getInstance();
-    private preGenerateCallback: () => any = () => {};
-    private postGenerateCallback: () => any = () => {};
+    private preGenerateCallback: () => void = () => {};
+    private postGenerateCallback: () => void = () => {};
     private _models: BuildingModels = new BuildingModels([]);
     private _blocks: Vector[][] = [];
 
@@ -162,11 +161,11 @@ export default class Buildings {
         this.postGenerateCallback();
     }
 
-    setPreGenerateCallback(callback: () => any): void {
+    setPreGenerateCallback(callback: () => void): void {
         this.preGenerateCallback = callback;
     }
 
-    setPostGenerateCallback(callback: () => any): void {
+    setPostGenerateCallback(callback: () => void): void {
         this.postGenerateCallback = callback;
     }
 }

@@ -1,5 +1,5 @@
 import * as log from 'loglevel';
-import * as simplify from 'simplify-js';
+import simplify from 'simplify-js';
 import Vector from '../vector';
 import GridStorage from './grid_storage';
 import FieldIntegrator from './integrator';
@@ -156,7 +156,7 @@ export default class StreamlineGenerator {
      * Gets next best point to join streamline
      * returns null if there are no good candidates
      */
-    getBestNextPoint(point: Vector, previousPoint: Vector, streamline: Vector[]): Vector {
+    getBestNextPoint(point: Vector, previousPoint: Vector, _streamline: Vector[]): Vector {
         const nearbyPoints = this.majorGrid.getNearbyPoints(point, this.params.dlookahead);
         nearbyPoints.push(...this.minorGrid.getNearbyPoints(point, this.params.dlookahead));
         const direction = point.clone().sub(previousPoint);

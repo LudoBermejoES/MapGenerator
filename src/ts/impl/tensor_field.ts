@@ -1,6 +1,4 @@
-import * as log from 'loglevel';
-// import * as noise from 'noisejs';
-import * as SimplexNoise from 'simplex-noise';
+import { createNoise2D } from 'simplex-noise';
 import Tensor from './tensor';
 import Vector from '../vector';
 import {Grid, Radial, BasisField} from './basis_field';
@@ -20,7 +18,7 @@ export interface NoiseParams {
  */
 export default class TensorField {
     private basisFields: BasisField[] = [];
-    private noise: SimplexNoise;
+    private noise: (x: number, y: number) => number;
 
     public parks: Vector[][] = [];
     public sea: Vector[] = [];
@@ -30,7 +28,7 @@ export default class TensorField {
     public smooth = false;
 
     constructor(public noiseParams: NoiseParams) {
-        this.noise = new SimplexNoise();
+        this.noise = createNoise2D();
     }
 
     /**
@@ -113,7 +111,7 @@ export default class TensorField {
      * Noise Angle is in degrees
      */
     getRotationalNoise(point: Vector, noiseSize: number, noiseAngle: number): number {
-        return this.noise.noise2D(point.x / noiseSize, point.y / noiseSize) * noiseAngle * Math.PI / 180;
+        return this.noise(point.x / noiseSize, point.y / noiseSize) * noiseAngle * Math.PI / 180;
     }
 
     onLand(point: Vector): boolean {

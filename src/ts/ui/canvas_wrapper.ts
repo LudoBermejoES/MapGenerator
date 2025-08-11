@@ -1,4 +1,3 @@
-import * as log from 'loglevel';
 import Vector from '../vector';
 import { SVG } from '@svgdotjs/svg.js';
 import Util from '../util';
@@ -255,7 +254,7 @@ export class RoughCanvasWrapper extends CanvasWrapper {
         this.rc = this.r.svg(this.svgNode);
     }
 
-    drawFrame(left: number, right: number, up: number, down: number): void {
+    drawFrame(_left: number, _right: number, _up: number, _down: number): void {
 
     }
 

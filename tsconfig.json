@@ -1,13 +1,30 @@
 {
     "compilerOptions": {
-        "noImplicitAny": true,
-        "target": "es5",
+        "strict": false,
+        "noImplicitAny": false,
+        "target": "ES2022",
+        "module": "ES2022",
         "skipLibCheck": true,
-        "lib": ["es6", "DOM", "ScriptHost"],
-        "downlevelIteration": true,
-        "resolveJsonModule": true
+        "lib": ["ES2024", "DOM", "DOM.Iterable"],
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": false,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "noEmit": true,
+        "jsx": "preserve",
+        "esModuleInterop": true,
+        "allowSyntheticDefaultImports": true,
+        "forceConsistentCasingInFileNames": true,
+        "useDefineForClassFields": true,
+        "allowJs": true,
+        "checkJs": false
     },
     "include": [
-        "src/**/*.ts"
+        "src/**/*.ts",
+        "src/**/*.js"
+    ],
+    "exclude": [
+        "node_modules",
+        "dist"
     ]
 }

@@ -1,7 +1,7 @@
 import * as log from 'loglevel';
 import * as PolyK from 'polyk';
 import Vector from '../vector';
-import * as jsts from 'jsts';
+declare const jsts: any;
 
 export default class PolygonUtil {
     private static geometryFactory = new jsts.geom.GeometryFactory();
@@ -39,7 +39,7 @@ export default class PolygonUtil {
         ];
         const boundingPoly = PolygonUtil.polygonToJts(bounds);
         const union = boundingPoly.getExteriorRing().union(jstsLine);
-        const polygonizer = new (jsts.operation as any).polygonize.Polygonizer();
+        const polygonizer = new jsts.operation.polygonize.Polygonizer();
         polygonizer.add(union);
         const polygons = polygonizer.getPolygons();
 
@@ -141,7 +141,7 @@ export default class PolygonUtil {
     public static resizeGeometry(geometry: Vector[], spacing: number, isPolygon=true): Vector[] {
         try {
             const jstsGeometry = isPolygon? PolygonUtil.polygonToJts(geometry) : PolygonUtil.lineToJts(geometry);
-            const resized = jstsGeometry.buffer(spacing, undefined, (jsts as any).operation.buffer.BufferParameters.CAP_FLAT);
+            const resized = jstsGeometry.buffer(spacing, undefined, jsts.operation.buffer.BufferParameters.CAP_FLAT);
             if (!resized.isSimple()) {
                 return [];
             }
@@ -186,12 +186,12 @@ export default class PolygonUtil {
         return point.x >= origin.x && point.y >= origin.y && point.x <= dimensions.x && point.y <= dimensions.y;
     }
 
-    private static lineToJts(line: Vector[]): jsts.geom.LineString {
+    private static lineToJts(line: Vector[]): any {
         const coords = line.map(v => new jsts.geom.Coordinate(v.x, v.y));
         return PolygonUtil.geometryFactory.createLineString(coords);
     }
 
-    private static polygonToJts(polygon: Vector[]): jsts.geom.Polygon {
+    private static polygonToJts(polygon: Vector[]): any {
         const geoInput = polygon.map(v => new jsts.geom.Coordinate(v.x, v.y));
         geoInput.push(geoInput[0]);  // Create loop
         return PolygonUtil.geometryFactory.createPolygon(PolygonUtil.geometryFactory.createLinearRing(geoInput), []);

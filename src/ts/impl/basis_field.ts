@@ -75,8 +75,8 @@ export abstract class BasisField {
         this.folder = folder;
         folder.add(this._centre, 'x');
         folder.add(this._centre, 'y');
-        folder.add(this, '_size');
-        folder.add(this, '_decay', -50, 50);
+        folder.add(this, '_size' as any);
+        folder.add(this, '_decay' as any, -50, 50);
     }
 
     /**
@@ -116,7 +116,7 @@ export class Grid extends BasisField {
         thetaController.onChange(theta => this._theta = theta * (Math.PI / 180));
     }
 
-    getTensor(point: Vector): Tensor {
+    getTensor(_point: Vector): Tensor {
         const cos = Math.cos(2 * this._theta);
         const sin = Math.sin(2 * this._theta);
         return new Tensor(1, [cos, sin]);

@@ -1,11 +1,7 @@
 import * as log from 'loglevel';
-import * as dat from 'dat.gui';
-import TensorFieldGUI from './tensor_field_gui';
-import {NoiseParams} from '../impl/tensor_field';
 import CanvasWrapper from './canvas_wrapper';
 import {DefaultCanvasWrapper, RoughCanvasWrapper} from './canvas_wrapper';
 import Util from '../util';
-import PolygonUtil from '../impl/polygon_util';
 import DragController from './drag_controller';
 import DomainController from './domain_controller';
 import Vector from '../vector';
@@ -357,7 +353,7 @@ export class RoughStyle extends Style {
                 });
 
                 // TODO this can be hugely improved
-                const allSidesDistances: any[] = [];
+                const allSidesDistances: [number, Vector[]][] = [];
                 const camera = this.domainController.getCameraPosition();
                 for (const b of this.buildingModels) {
                     for (const s of b.sides) {

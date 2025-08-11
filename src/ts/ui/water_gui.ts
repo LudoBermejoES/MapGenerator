@@ -1,16 +1,16 @@
-import * as log from 'loglevel';
-import CanvasWrapper from './canvas_wrapper';
-import DomainController from './domain_controller';
+// import * as log from 'loglevel'; // Unused
+// import CanvasWrapper from './canvas_wrapper'; // Unused  
+// import DomainController from './domain_controller'; // Unused
 import Util from '../util';
 import FieldIntegrator from '../impl/integrator';
 import {StreamlineParams} from '../impl/streamlines';
 import {WaterParams} from '../impl/water_generator';
 import WaterGenerator from '../impl/water_generator';
 import Vector from '../vector';
-import PolygonFinder from '../impl/polygon_finder';
-import PolygonUtil from '../impl/polygon_util';
+// import PolygonFinder from '../impl/polygon_finder'; // Unused
+// import PolygonUtil from '../impl/polygon_util'; // Unused
 import RoadGUI from './road_gui';
-import {NoiseParams} from '../impl/tensor_field';
+// import {NoiseParams} from '../impl/tensor_field'; // Unused
 import TensorField from '../impl/tensor_field';
 
 /**

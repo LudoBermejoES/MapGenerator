@@ -508,3 +508,371 @@ private complexifyStreamlineRecursive(v1: Vector, v2: Vector): Vector[] {
 - **Memory Pooling**: Vector object reuse during intensive geometric processing
 
 This water generation system demonstrates sophisticated procedural generation combining mathematical field theory, computational geometry, and careful state management to create realistic natural features that seamlessly integrate with the broader city generation pipeline.
+
+## Coastline Generation System - Deep Technical Analysis
+
+### Overview and Architectural Philosophy
+
+The coastline generation system represents one of the most sophisticated aspects of MapGenerator's water features, creating realistic shorelines through tensor field integration, noise application, and complex geometric processing. Unlike simple line drawing, coastlines are generated as living streamlines that follow the mathematical flow field while incorporating natural irregularities through controlled noise injection.
+
+#### Fundamental Design Principles
+- **Field-Driven Generation**: Coastlines emerge naturally from tensor field integration, not predetermined paths
+- **Edge-Boundary Constraints**: Coastlines must span the entire world boundary to create proper enclosed sea polygons
+- **Noise-Enhanced Realism**: Controllable irregularity through simplex noise rotational perturbation
+- **Geometric Precision**: Complex polygon operations ensure proper sea/land boundaries for road generation
+
+### Coastline Generation Algorithm Deep Dive
+
+#### Phase 1: Initialization and Parameter Setup
+```typescript
+createCoast(): void {
+    let coastStreamline;
+    let seed;
+    let major;
+    
+    if (this.params.coastNoise.noiseEnabled) {
+        this.tensorField.enableGlobalNoise(
+            this.params.coastNoise.noiseAngle, 
+            this.params.coastNoise.noiseSize
+        );    
+    }
+```
+
+**Critical Implementation Details:**
+- **Noise State Management**: Global noise temporarily modifies the entire tensor field during coastline generation
+- **Parameter Isolation**: Coast noise parameters are independent of river noise settings
+- **Field Modification**: `enableGlobalNoise()` affects all tensor field sampling until explicitly disabled
+
+#### Phase 2: Iterative Coastline Discovery
+```typescript
+for (let i = 0; i < this.TRIES; i++) {
+    major = Math.random() < 0.5;  // 50% probability of major vs minor direction
+    seed = this.getSeed(major);   // Find valid seed point
+    coastStreamline = this.extendStreamline(this.integrateStreamline(seed, major));
+    
+    if (this.reachesEdges(coastStreamline)) {
+        break;  // Success - coastline spans world boundaries
+    }
+}
+```
+
+**Sophisticated Retry Logic:**
+- **Direction Randomization**: Each attempt randomly selects major or minor tensor field direction
+- **Seed Discovery**: `getSeed()` performs spatial sampling with collision avoidance
+- **Edge Validation**: `reachesEdges()` ensures both endpoints extend beyond world boundaries
+- **Failure Tolerance**: Up to 100 attempts before accepting failure (no error thrown)
+
+### Seed Point Discovery System
+
+#### Random Spatial Sampling Strategy
+```typescript
+protected samplePoint(): Vector {
+    return new Vector(
+        Math.random() * this.worldDimensions.x,
+        Math.random() * this.worldDimensions.y)
+        .add(this.origin);
+}
+```
+- **Uniform Distribution**: Simple uniform random sampling across world space
+- **Origin Translation**: Sampling relative to world origin, not (0,0)
+- **TODO Note**: Comments indicate "better seeding scheme" needed for improved results
+
+#### Seed Validation Process
+```typescript
+protected getSeed(major: boolean): Vector {
+    let seed = this.samplePoint();
+    let i = 0;
+    while (!this.isValidSample(major, seed, this.paramsSq.dsep)) {
+        if (i >= this.params.seedTries) {
+            return null;  // Failure after maximum attempts
+        }
+        seed = this.samplePoint();
+        i++;
+    }
+    return seed;
+}
+```
+
+**Multi-Criteria Validation:**
+- **Spatial Collision**: `grid(major).isValidSample()` ensures minimum separation from existing streamlines
+- **Land Constraint**: `integrator.onLand(point)` prevents seeds in existing water bodies
+- **Retry Limit**: `seedTries` parameter controls maximum seed attempts (typically 100)
+- **Graceful Failure**: Returns `null` rather than throwing exceptions
+
+### Streamline Integration Deep Analysis
+
+#### Bidirectional Growth Strategy
+The `integrateStreamline()` method implements sophisticated bidirectional integration:
+
+```typescript
+const d = this.integrator.integrate(seed, major);
+
+const forwardParams: StreamlineIntegration = {
+    seed: seed,
+    originalDir: d,
+    streamline: [seed],
+    previousDirection: d,
+    previousPoint: seed.clone().add(d),
+    valid: true,
+}
+
+const backwardParams: StreamlineIntegration = {
+    seed: seed,
+    originalDir: negD,  // Opposite direction
+    streamline: [],
+    previousDirection: negD,
+    previousPoint: seed.clone().add(negD),
+    valid: true,
+}
+```
+
+**Integration Physics:**
+- **Tensor Field Sampling**: Each step samples the tensor field to determine flow direction
+- **Step Size Control**: `dstep` parameter controls integration granularity
+- **Direction Continuity**: Previous direction influences next step to prevent sudden direction changes
+- **Boundary Detection**: Integration stops when points leave world bounds or hit invalid regions
+
+#### Circle Detection and Closure
+```typescript
+const sqDistanceBetweenPoints = forwardParams.previousPoint.distanceToSquared(backwardParams.previousPoint);
+
+if (!pointsEscaped && sqDistanceBetweenPoints > this.paramsSq.dcirclejoin) {
+    pointsEscaped = true;
+}
+
+if (pointsEscaped && sqDistanceBetweenPoints <= this.paramsSq.dcirclejoin) {
+    // Join the circle
+    forwardParams.streamline.push(forwardParams.previousPoint);
+    forwardParams.streamline.push(backwardParams.previousPoint);
+    break;
+}
+```
+
+**Sophisticated Circle Logic:**
+- **Escape Detection**: Tracks when integration fronts move apart by `dcirclejoin` distance
+- **Closure Opportunity**: Only attempts closure after fronts have separated and come back together
+- **Prevents Premature Closure**: Avoids tiny loops by requiring initial separation
+- **Natural Termination**: Creates closed coastlines when field conditions favor circular patterns
+
+### Coastline Extension and Edge-Reaching Logic
+
+#### Extension Strategy for Boundary Spanning
+```typescript
+private extendStreamline(streamline: Vector[]): Vector[] {
+    streamline.unshift(streamline[0].clone().add(
+        streamline[0].clone().sub(streamline[1]).setLength(this.params.dstep * 5)
+    ));
+    streamline.push(streamline[streamline.length - 1].clone().add(
+        streamline[streamline.length - 1].clone().sub(streamline[streamline.length - 2]).setLength(this.params.dstep * 5)
+    ));
+    return streamline;
+}
+```
+
+**Mathematical Extension Process:**
+- **Direction Calculation**: Uses vector subtraction to determine end-point directions
+- **Fixed Extension Length**: Always extends by `5 × dstep` regardless of field conditions
+- **Linear Projection**: Extension follows straight line, not tensor field (avoids infinite loops)
+- **Bidirectional**: Both start and end points extended simultaneously
+
+#### Edge-Reaching Validation
+```typescript
+private reachesEdges(streamline: Vector[]): boolean {
+    return this.vectorOffScreen(streamline[0]) && this.vectorOffScreen(streamline[streamline.length - 1]);
+}
+
+private vectorOffScreen(v: Vector): boolean {
+    const toOrigin = v.clone().sub(this.origin);
+    return toOrigin.x <= 0 || toOrigin.y <= 0 ||
+           toOrigin.x >= this.worldDimensions.x || toOrigin.y >= this.worldDimensions.y;
+}
+```
+
+**Precise Boundary Detection:**
+- **World Space Coordinates**: Uses generation coordinate system, not screen coordinates
+- **Strict Requirements**: Both endpoints must be beyond world boundaries
+- **Buffer Zone**: Points must be outside world dimensions, not just at edges
+- **Critical for Success**: Failure to reach edges triggers complete retry with new seed
+
+### Sea Polygon Creation and Geometric Processing
+
+#### Advanced Polygon Construction
+```typescript
+const road = this.simplifyStreamline(coastStreamline);
+this._seaPolygon = this.getSeaPolygon(road);
+```
+
+The `getSeaPolygon()` method uses sophisticated JSTS geometric operations:
+
+```typescript
+private getSeaPolygon(polyline: Vector[]): Vector[] {
+    return PolygonUtil.lineRectanglePolygonIntersection(this.origin, this.worldDimensions, polyline);
+}
+```
+
+**Complex JSTS Integration Process:**
+1. **Line to JSTS Conversion**: Coastline converted to JSTS LineString geometry
+2. **World Boundary Creation**: Rectangle bounds created as JSTS Polygon
+3. **Union Operation**: `boundingPoly.getExteriorRing().union(jstsLine)` combines line and boundary
+4. **Polygonization**: `jsts.operation.polygonize.Polygonizer` extracts closed polygons
+5. **Area Selection**: Smallest resulting polygon selected as sea area
+
+**Geometric Robustness:**
+- **Self-Intersection Handling**: JSTS automatically handles self-intersecting coastlines
+- **Multiple Polygon Support**: Polygonizer can create multiple closed regions
+- **Area-Based Selection**: Selects smallest polygon to represent sea (not land)
+- **Precision Management**: JSTS provides robust floating-point geometry operations
+
+### Noise Application and Field Modification
+
+#### Global Noise System Architecture
+```typescript
+enableGlobalNoise(angle: number, size: number): void {
+    this.noiseParams.globalNoise = true;
+    this.noiseParams.noiseAngleGlobal = angle;
+    this.noiseParams.noiseSizeGlobal = size;
+}
+```
+
+**Noise Integration in Tensor Field Sampling:**
+```typescript
+if (this.noiseParams.globalNoise) {
+    tensorAcc.rotate(this.getRotationalNoise(point, this.noiseParams.noiseSizeGlobal, this.noiseParams.noiseAngleGlobal));
+}
+
+getRotationalNoise(point: Vector, noiseSize: number, noiseAngle: number): number {
+    return this.noise(point.x / noiseSize, point.y / noiseSize) * noiseAngle * Math.PI / 180;
+}
+```
+
+**Sophisticated Noise Mathematics:**
+- **Simplex Noise Sampling**: Uses `createNoise2D()` for smooth, natural variation
+- **Coordinate Scaling**: `point.x / noiseSize` controls noise frequency (smaller = more detail)
+- **Angular Perturbation**: Noise rotates tensor field directions by up to `noiseAngle` degrees
+- **Radian Conversion**: Degrees converted to radians for mathematical operations
+- **Tensor Rotation**: Applied to entire tensor, affecting both major and minor directions
+
+#### Noise Parameters and Effects
+- **noiseSize**: Controls frequency of coastal irregularities (30 = moderate detail)
+- **noiseAngle**: Maximum angular deviation in degrees (20° = subtle variation)
+- **noiseEnabled**: Boolean toggle for noise application during generation
+
+**Visual Impact:**
+- Small `noiseSize` values create highly detailed, jagged coastlines
+- Large `noiseSize` values create gentle, sweeping coastal curves  
+- High `noiseAngle` values create dramatic directional changes
+- Low `noiseAngle` values create subtle coastal variations
+
+### Coastline Simplification and Road Integration
+
+#### Douglas-Peucker Simplification
+```typescript
+protected simplifyStreamline(streamline: Vector[]): Vector[] {
+    const simplified = [];
+    for (const point of simplify(streamline, this.params.simplifyTolerance)) {
+        simplified.push(new Vector(point.x, point.y));
+    }
+    return simplified;
+}
+```
+
+**Critical Simplification Process:**
+- **Library Integration**: Uses `simplify-js` library implementing Douglas-Peucker algorithm
+- **Tolerance Control**: `simplifyTolerance` parameter (typically 10) controls vertex reduction
+- **Performance Trade-off**: Fewer vertices = better performance, less detail
+- **Vector Conversion**: Converts simplified points back to Vector objects
+
+#### Road Network Integration
+```typescript
+const complex = this.complexifyStreamline(road);
+this.grid(major).addPolyline(complex);
+this.streamlines(major).push(complex);
+this.allStreamlines.push(complex);
+```
+
+**Complexification for Collision Detection:**
+- **Reverse Simplification**: Adds intermediate points between simplified vertices
+- **Uniform Spacing**: Ensures points separated by at most `dstep` distance
+- **Spatial Grid Integration**: Complex coastline added to collision detection grid
+- **Road Generation Impact**: Prevents road streamlines from crossing coastline
+
+### Performance Characteristics and Optimization
+
+#### Computational Complexity
+- **Seed Discovery**: O(seedTries) random sampling attempts
+- **Integration Steps**: O(pathIterations) tensor field evaluations
+- **JSTS Operations**: O(n log n) for polygon construction and intersection
+- **Noise Evaluation**: O(1) per integration step
+- **Simplification**: O(n log n) Douglas-Peucker algorithm
+
+#### Memory Usage Patterns
+- **Streamline Storage**: Full-resolution coastline kept for visual rendering
+- **Simplified Storage**: Reduced-vertex version for geometric operations
+- **Complex Storage**: High-density version for collision detection
+- **Spatial Indexing**: Grid storage for O(1) collision queries
+
+#### Critical Performance Bottlenecks
+1. **JSTS Polygon Operations**: Most expensive single operation
+2. **Integration Steps**: Can require thousands of tensor field samples
+3. **Retry Logic**: Up to 100 failed attempts in worst case
+4. **Noise Evaluation**: Simplex noise calculation per integration step
+
+### Edge Cases and Failure Modes
+
+#### Geometric Failure Scenarios
+- **No Valid Seeds**: All random points within collision distance of existing features
+- **Field Singularities**: Tensor field regions with zero or undefined directions
+- **Edge Escape Failure**: Streamlines that curve back before reaching boundaries
+- **Self-Intersection**: Coastlines that intersect themselves (handled by JSTS)
+
+#### Parameter Sensitivity Analysis
+- **Low dstep**: High detail but expensive computation and potential precision issues
+- **High dstep**: Fast generation but chunky, unrealistic coastlines
+- **High noiseAngle**: Dramatic variation but potential for wild, unrealistic shapes
+- **Low noiseSize**: Extremely detailed but potentially chaotic coastlines
+- **High simplifyTolerance**: Fast processing but loss of coastal character
+
+#### Robustness Mechanisms
+- **Graceful Degradation**: System continues with partial failures
+- **Parameter Validation**: Automatic adjustment of conflicting parameters
+- **State Cleanup**: Noise disabled after generation to prevent interference
+- **Memory Management**: Temporary structures cleaned up after polygon creation
+
+### Integration with Broader Generation Pipeline
+
+#### Tensor Field Feedback Loop
+```typescript
+this.tensorField.sea = (this._seaPolygon);
+```
+- **Immediate Integration**: Sea polygon immediately affects subsequent road generation
+- **Land/Water Boundaries**: `onLand()` method uses sea polygon for spatial queries
+- **Road Collision**: Streamline generation automatically avoids sea areas
+- **Visual Hierarchy**: Coastline rendered before roads for proper layering
+
+#### Coordinate System Management
+- **World Space Generation**: All coastline operations in generation coordinates
+- **Screen Space Rendering**: Coastline converted to screen coordinates for display
+- **Zoom Independence**: Generation parameters independent of display zoom level
+- **Origin Handling**: Proper translation for non-zero world origins
+
+### Future Enhancement Opportunities
+
+#### Algorithmic Improvements
+- **Adaptive Seeding**: Intelligent seed placement based on existing features
+- **Multi-Scale Noise**: Combination of different noise frequencies for realistic detail
+- **Tidal Zones**: Support for variable coastline positions
+- **Erosion Simulation**: Time-based coastline modification
+
+#### Performance Optimizations
+- **Incremental Generation**: Streaming generation for large worlds
+- **GPU Acceleration**: Parallel integration and noise evaluation
+- **Spatial Caching**: Reuse of tensor field evaluations
+- **Adaptive Tolerance**: Dynamic simplification based on zoom level
+
+#### Enhanced Realism Features
+- **Cliff Detection**: Vertical coastline features
+- **Beach Generation**: Shallow water and sandy areas
+- **Coastal Vegetation**: Automatic placement of coastal features
+- **Wave Physics**: Directional wave influence on coastline shape
+
+This coastline generation system represents a sophisticated fusion of mathematical field theory, computational geometry, and procedural generation techniques, creating natural-looking shorelines that seamlessly integrate with the urban planning algorithms while maintaining high performance and geometric robustness.

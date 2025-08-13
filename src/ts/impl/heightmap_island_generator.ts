@@ -360,14 +360,47 @@ export default class HeightmapIslandGenerator extends WaterGenerator {
         if (island.coastline.length === 0) return;
         
         // Add coastline to streamline system for collision detection
+        // Note: Islands don't need edge-reaching extensions like continental coastlines
         const simplified = this.simplifyStreamline(island.coastline);
         this.allStreamlinesSimple.push(simplified);
         
-        // Create intermediate samples for collision detection
-        const complex = this.complexifyStreamline(simplified);
+        // Create intermediate samples for collision detection without edge extensions
+        const complex = this.complexifyStreamlineForIsland(simplified);
         this.grid(major).addPolyline(complex);
         this.streamlines(major).push(complex);
         this.allStreamlines.push(complex);
+    }
+
+    /**
+     * Island-specific complexification that doesn't apply edge-reaching extensions
+     * Override parent method to prevent thin extensions to screen boundaries
+     */
+    private complexifyStreamlineForIsland(s: Vector[]): Vector[] {
+        const out: Vector[] = [];
+        for (let i = 0; i < s.length - 1; i++) {
+            out.push(...this.complexifyStreamlineRecursive(s[i], s[i+1]));
+        }
+        // For closed island coastlines, connect back to start
+        if (s.length > 2) {
+            out.push(...this.complexifyStreamlineRecursive(s[s.length - 1], s[0]));
+        }
+        return out;
+    }
+
+    /**
+     * Recursive helper for island streamline complexification
+     * Replicates parent logic without edge-reaching modifications
+     */
+    private complexifyStreamlineRecursive(v1: Vector, v2: Vector): Vector[] {
+        if (v1.distanceToSquared(v2) <= this.params.dstep * this.params.dstep) {
+            return [v1, v2];
+        }
+        const d = v2.clone().sub(v1);
+        const halfway = v1.clone().add(d.multiplyScalar(0.5));
+        
+        const complex = this.complexifyStreamlineRecursive(v1, halfway);
+        complex.push(...this.complexifyStreamlineRecursive(halfway, v2));
+        return complex;
     }
 
     private updateTensorFieldWithIslands(): void {

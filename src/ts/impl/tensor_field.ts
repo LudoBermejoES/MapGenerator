@@ -23,6 +23,7 @@ export default class TensorField {
     public parks: Vector[][] = [];
     public sea: Vector[] = [];
     public river: Vector[] = [];
+    public islands: Vector[][] = [];  // Island coastlines for heightmap islands
     public ignoreRiver = false;
 
     public smooth = false;
@@ -116,11 +117,21 @@ export default class TensorField {
 
     onLand(point: Vector): boolean {
         const inSea = PolygonUtil.insidePolygon(point, this.sea);
+        
+        // Check if point is inside any island (islands are land within sea)
+        let onIsland = false;
+        for (const island of this.islands) {
+            if (PolygonUtil.insidePolygon(point, island)) {
+                onIsland = true;
+                break;
+            }
+        }
+        
         if (this.ignoreRiver) {
-            return !inSea;
+            return !inSea || onIsland;
         }
 
-        return !inSea && !PolygonUtil.insidePolygon(point, this.river);
+        return (!inSea || onIsland) && !PolygonUtil.insidePolygon(point, this.river);
     }
 
     inParks(point: Vector): boolean {

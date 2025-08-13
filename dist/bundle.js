@@ -10187,6 +10187,8 @@
     parks = [];
     sea = [];
     river = [];
+    islands = [];
+    // Island coastlines for heightmap islands
     ignoreRiver = false;
     smooth = false;
     /**
@@ -10254,10 +10256,17 @@
     }
     onLand(point2) {
       const inSea = PolygonUtil.insidePolygon(point2, this.sea);
-      if (this.ignoreRiver) {
-        return !inSea;
+      let onIsland = false;
+      for (const island of this.islands) {
+        if (PolygonUtil.insidePolygon(point2, island)) {
+          onIsland = true;
+          break;
+        }
       }
-      return !inSea && !PolygonUtil.insidePolygon(point2, this.river);
+      if (this.ignoreRiver) {
+        return !inSea || onIsland;
+      }
+      return (!inSea || onIsland) && !PolygonUtil.insidePolygon(point2, this.river);
     }
     inParks(point2) {
       for (const p of this.parks) {
@@ -13494,10 +13503,38 @@
       if (island.coastline.length === 0) return;
       const simplified = this.simplifyStreamline(island.coastline);
       this.allStreamlinesSimple.push(simplified);
-      const complex = this.complexifyStreamline(simplified);
+      const complex = this.complexifyStreamlineForIsland(simplified);
       this.grid(major).addPolyline(complex);
       this.streamlines(major).push(complex);
       this.allStreamlines.push(complex);
+    }
+    /**
+     * Island-specific complexification that doesn't apply edge-reaching extensions
+     * Override parent method to prevent thin extensions to screen boundaries
+     */
+    complexifyStreamlineForIsland(s) {
+      const out = [];
+      for (let i = 0; i < s.length - 1; i++) {
+        out.push(...this.complexifyStreamlineRecursive(s[i], s[i + 1]));
+      }
+      if (s.length > 2) {
+        out.push(...this.complexifyStreamlineRecursive(s[s.length - 1], s[0]));
+      }
+      return out;
+    }
+    /**
+     * Recursive helper for island streamline complexification
+     * Replicates parent logic without edge-reaching modifications
+     */
+    complexifyStreamlineRecursive(v1, v2) {
+      if (v1.distanceToSquared(v2) <= this.params.dstep * this.params.dstep) {
+        return [v1, v2];
+      }
+      const d = v2.clone().sub(v1);
+      const halfway = v1.clone().add(d.multiplyScalar(0.5));
+      const complex = this.complexifyStreamlineRecursive(v1, halfway);
+      complex.push(...this.complexifyStreamlineRecursive(halfway, v2));
+      return complex;
     }
     updateTensorFieldWithIslands() {
       const islandCoastlines = this._islands.map((island) => island.coastline);
@@ -20387,6 +20424,36 @@
     }
     get coastlinePolygon() {
       return PolygonUtil.resizeGeometry(this.coastline.coastline, 15 * this.domainController.zoom, false);
+    }
+    // JavaScript API Methods
+    /**
+     * Get coastline parameters for programmatic access
+     */
+    getCoastlineParams() {
+      return this.coastlineParams;
+    }
+    /**
+     * Generate only coastline/water features
+     */
+    generateCoastline() {
+      this.coastline.generateRoads();
+    }
+    /**
+     * Clear all generated content
+     */
+    clearAll() {
+      this.coastline.clearStreamlines();
+      this.mainRoads.clearStreamlines();
+      this.majorRoads.clearStreamlines();
+      this.minorRoads.clearStreamlines();
+      this.bigParks = [];
+      this.smallParks = [];
+      this.buildings.reset();
+      this.tensorField.parks = [];
+      this.tensorField.sea = [];
+      this.tensorField.river = [];
+      this.tensorField.islands = [];
+      this.intersections = [];
     }
   };
 
@@ -37190,10 +37257,190 @@
       this.draw();
       requestAnimationFrame(this.update.bind(this));
     }
+    // JavaScript API Methods
+    /**
+     * Generate heightmap islands programmatically
+     */
+    generateHeightmapIslands(config) {
+      const waterParams = this.mainGui.getCoastlineParams();
+      waterParams.useHeightmapIslands = true;
+      waterParams.useSolidLandmasses = false;
+      if (!waterParams.heightmapIslands) {
+        waterParams.heightmapIslands = {
+          numIslands: 3,
+          baseSize: 256,
+          sizeVariation: 0.3,
+          smoothness: 0.5,
+          seaLevel: 0,
+          beachLevel: 0.1,
+          worldScale: 2,
+          falloffFactor: 2,
+          volcanoMode: false,
+          atolloMode: false
+        };
+      }
+      Object.assign(waterParams.heightmapIslands, config);
+      if (config.noiseEnabled !== void 0) {
+        waterParams.coastNoise.noiseEnabled = config.noiseEnabled;
+      }
+      if (config.noiseSize !== void 0) {
+        waterParams.coastNoise.noiseSize = config.noiseSize;
+      }
+      if (config.noiseAngle !== void 0) {
+        waterParams.coastNoise.noiseAngle = config.noiseAngle;
+      }
+      if (this.firstGenerate) {
+        this.tensorField.setRecommended();
+        this.firstGenerate = false;
+      }
+      this.mainGui.generateCoastline();
+      return Promise.resolve();
+    }
+    /**
+     * Generate solid landmasses programmatically
+     */
+    generateSolidLandmasses(config) {
+      const waterParams = this.mainGui.getCoastlineParams();
+      waterParams.useSolidLandmasses = true;
+      waterParams.useHeightmapIslands = false;
+      if (!waterParams.landmassGeneration) {
+        waterParams.landmassGeneration = {
+          landmassType: "continent",
+          primaryLandmassSize: 0.6,
+          coastalComplexity: 0.7,
+          developableAreaRatio: 0.6,
+          naturalFeatures: {
+            bays: { enabled: true, count: 2, depth: 0.3 },
+            peninsulas: { enabled: true, count: 1, length: 0.4 },
+            capes: { enabled: true, count: 3, prominence: 0.2 },
+            inlets: { enabled: false, count: 0, depth: 0.1 }
+          },
+          secondaryLandmasses: {
+            enabled: false,
+            count: 2,
+            sizeRange: [0.1, 0.3],
+            proximityFactor: 0.7
+          }
+        };
+      }
+      if (config.landmassType) waterParams.landmassGeneration.landmassType = config.landmassType;
+      if (config.primaryLandmassSize !== void 0) waterParams.landmassGeneration.primaryLandmassSize = config.primaryLandmassSize;
+      if (config.coastalComplexity !== void 0) waterParams.landmassGeneration.coastalComplexity = config.coastalComplexity;
+      if (config.developableAreaRatio !== void 0) waterParams.landmassGeneration.developableAreaRatio = config.developableAreaRatio;
+      if (config.secondaryLandmassesEnabled !== void 0) waterParams.landmassGeneration.secondaryLandmasses.enabled = config.secondaryLandmassesEnabled;
+      if (config.secondaryLandmassCount !== void 0) waterParams.landmassGeneration.secondaryLandmasses.count = config.secondaryLandmassCount;
+      if (this.firstGenerate) {
+        this.tensorField.setRecommended();
+        this.firstGenerate = false;
+      }
+      this.mainGui.generateCoastline();
+      return Promise.resolve();
+    }
+    /**
+     * Generate regular coastline (continental mode)
+     */
+    generateCoastline(config) {
+      const waterParams = this.mainGui.getCoastlineParams();
+      waterParams.useHeightmapIslands = false;
+      waterParams.useSolidLandmasses = false;
+      if (config.noiseEnabled !== void 0) {
+        waterParams.coastNoise.noiseEnabled = config.noiseEnabled;
+      }
+      if (config.noiseSize !== void 0) {
+        waterParams.coastNoise.noiseSize = config.noiseSize;
+      }
+      if (config.noiseAngle !== void 0) {
+        waterParams.coastNoise.noiseAngle = config.noiseAngle;
+      }
+      if (config.numRivers !== void 0) {
+        waterParams.numRivers = config.numRivers;
+      }
+      if (this.firstGenerate) {
+        this.tensorField.setRecommended();
+        this.firstGenerate = false;
+      }
+      this.mainGui.generateCoastline();
+      return Promise.resolve();
+    }
+    /**
+     * Generate complete map with everything
+     */
+    generateEverything() {
+      if (this.firstGenerate) {
+        this.tensorField.setRecommended();
+        this.firstGenerate = false;
+      }
+      return this.mainGui.generateEverything();
+    }
+    /**
+     * Clear all generated content
+     */
+    clearAll() {
+      this.tensorField.reset();
+      this.tensorField.setRecommended();
+      this.mainGui.clearAll();
+      this.previousFrameDrawTensor = true;
+    }
+    /**
+     * Configure tensor field
+     */
+    setTensorField(config) {
+      if (config.useRecommended) {
+        this.tensorField.setRecommended();
+      }
+      if (config.addGrid) {
+        this.tensorField.addGrid();
+      }
+      if (config.addRadial) {
+        this.tensorField.addRadial();
+      }
+    }
+    /**
+     * Access to main GUI for advanced operations
+     */
+    getMainGUI() {
+      return this.mainGui;
+    }
+    /**
+     * Access to tensor field for advanced operations
+     */
+    getTensorField() {
+      return this.tensorField;
+    }
   };
   window.log = log11;
+  var mainInstance;
   window.addEventListener("load", () => {
-    new Main();
+    mainInstance = new Main();
+    window.MapGeneratorAPI = {
+      // Generate heightmap islands programmatically
+      generateHeightmapIslands: (config) => {
+        return mainInstance.generateHeightmapIslands(config || {});
+      },
+      // Generate solid landmasses programmatically  
+      generateSolidLandmasses: (config) => {
+        return mainInstance.generateSolidLandmasses(config || {});
+      },
+      // Generate regular coastline (continental mode)
+      generateCoastline: (config) => {
+        return mainInstance.generateCoastline(config || {});
+      },
+      // Complete generation pipeline
+      generateEverything: () => {
+        return mainInstance.generateEverything();
+      },
+      // Clear all generated content
+      clearAll: () => {
+        return mainInstance.clearAll();
+      },
+      // Set tensor field configuration
+      setTensorField: (config) => {
+        return mainInstance.setTensorField(config || {});
+      },
+      // Access to low-level components
+      getMainGUI: () => mainInstance.getMainGUI(),
+      getTensorField: () => mainInstance.getTensorField()
+    };
   });
 })();
 /*! Bundled license information:

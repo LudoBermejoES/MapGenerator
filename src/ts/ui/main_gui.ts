@@ -364,4 +364,45 @@ export default class MainGUI {
     public get coastlinePolygon(): Vector[] {
         return PolygonUtil.resizeGeometry(this.coastline.coastline, 15 * this.domainController.zoom, false);
     }
+
+    // JavaScript API Methods
+
+    /**
+     * Get coastline parameters for programmatic access
+     */
+    public getCoastlineParams(): WaterParams {
+        return this.coastlineParams;
+    }
+
+    /**
+     * Generate only coastline/water features
+     */
+    public generateCoastline(): void {
+        this.coastline.generateRoads();
+    }
+
+    /**
+     * Clear all generated content
+     */
+    public clearAll(): void {
+        // Clear all road networks
+        this.coastline.clearStreamlines();
+        this.mainRoads.clearStreamlines();
+        this.majorRoads.clearStreamlines();
+        this.minorRoads.clearStreamlines();
+        
+        // Clear parks and buildings
+        this.bigParks = [];
+        this.smallParks = [];
+        this.buildings.reset();
+        
+        // Clear tensor field features
+        this.tensorField.parks = [];
+        this.tensorField.sea = [];
+        this.tensorField.river = [];
+        this.tensorField.islands = [];
+        
+        // Reset intersections
+        this.intersections = [];
+    }
 }

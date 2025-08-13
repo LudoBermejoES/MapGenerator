@@ -316,10 +316,314 @@ class Main {
         this.draw();
         requestAnimationFrame(this.update.bind(this));
     }
+
+    // JavaScript API Methods
+
+    /**
+     * Generate heightmap islands programmatically
+     */
+    generateHeightmapIslands(config: Partial<{
+        numIslands: number;
+        baseSize: number;
+        sizeVariation: number;
+        smoothness: number;
+        seaLevel: number;
+        beachLevel: number;
+        worldScale: number;
+        falloffFactor: number;
+        volcanoMode: boolean;
+        atolloMode: boolean;
+        noiseEnabled: boolean;
+        noiseSize: number;
+        noiseAngle: number;
+    }>): Promise<void> {
+        // Configure heightmap islands parameters
+        const waterParams = this.mainGui.getCoastlineParams();
+        
+        // Set generation mode
+        waterParams.useHeightmapIslands = true;
+        waterParams.useSolidLandmasses = false;
+        
+        // Configure heightmap island settings
+        if (!waterParams.heightmapIslands) {
+            waterParams.heightmapIslands = {
+                numIslands: 3,
+                baseSize: 256,
+                sizeVariation: 0.3,
+                smoothness: 0.5,
+                seaLevel: 0.0,
+                beachLevel: 0.1,
+                worldScale: 2.0,
+                falloffFactor: 2.0,
+                volcanoMode: false,
+                atolloMode: false
+            };
+        }
+
+        // Apply user configuration
+        Object.assign(waterParams.heightmapIslands, config);
+        
+        // Configure coastline noise if specified
+        if (config.noiseEnabled !== undefined) {
+            waterParams.coastNoise.noiseEnabled = config.noiseEnabled;
+        }
+        if (config.noiseSize !== undefined) {
+            waterParams.coastNoise.noiseSize = config.noiseSize;
+        }
+        if (config.noiseAngle !== undefined) {
+            waterParams.coastNoise.noiseAngle = config.noiseAngle;
+        }
+
+        // Ensure tensor field is set up
+        if (this.firstGenerate) {
+            this.tensorField.setRecommended();
+            this.firstGenerate = false;
+        }
+
+        // Generate coastline (which will create islands)
+        this.mainGui.generateCoastline();
+        
+        return Promise.resolve();
+    }
+
+    /**
+     * Generate solid landmasses programmatically
+     */
+    generateSolidLandmasses(config: Partial<{
+        landmassType: 'peninsula' | 'island_chain' | 'continent' | 'archipelago';
+        primaryLandmassSize: number;
+        coastalComplexity: number;
+        developableAreaRatio: number;
+        secondaryLandmassesEnabled: boolean;
+        secondaryLandmassCount: number;
+    }>): Promise<void> {
+        // Configure solid landmass parameters
+        const waterParams = this.mainGui.getCoastlineParams();
+        
+        // Set generation mode
+        waterParams.useSolidLandmasses = true;
+        waterParams.useHeightmapIslands = false;
+        
+        // Configure landmass generation settings
+        if (!waterParams.landmassGeneration) {
+            waterParams.landmassGeneration = {
+                landmassType: 'continent' as const,
+                primaryLandmassSize: 0.6,
+                coastalComplexity: 0.7,
+                developableAreaRatio: 0.6,
+                naturalFeatures: {
+                    bays: { enabled: true, count: 2, depth: 0.3 },
+                    peninsulas: { enabled: true, count: 1, length: 0.4 },
+                    capes: { enabled: true, count: 3, prominence: 0.2 },
+                    inlets: { enabled: false, count: 0, depth: 0.1 }
+                },
+                secondaryLandmasses: {
+                    enabled: false,
+                    count: 2,
+                    sizeRange: [0.1, 0.3] as [number, number],
+                    proximityFactor: 0.7
+                }
+            };
+        }
+
+        // Apply user configuration
+        if (config.landmassType) waterParams.landmassGeneration.landmassType = config.landmassType;
+        if (config.primaryLandmassSize !== undefined) waterParams.landmassGeneration.primaryLandmassSize = config.primaryLandmassSize;
+        if (config.coastalComplexity !== undefined) waterParams.landmassGeneration.coastalComplexity = config.coastalComplexity;
+        if (config.developableAreaRatio !== undefined) waterParams.landmassGeneration.developableAreaRatio = config.developableAreaRatio;
+        if (config.secondaryLandmassesEnabled !== undefined) waterParams.landmassGeneration.secondaryLandmasses.enabled = config.secondaryLandmassesEnabled;
+        if (config.secondaryLandmassCount !== undefined) waterParams.landmassGeneration.secondaryLandmasses.count = config.secondaryLandmassCount;
+
+        // Ensure tensor field is set up
+        if (this.firstGenerate) {
+            this.tensorField.setRecommended();
+            this.firstGenerate = false;
+        }
+
+        // Generate coastline (which will create solid landmasses)
+        this.mainGui.generateCoastline();
+        
+        return Promise.resolve();
+    }
+
+    /**
+     * Generate regular coastline (continental mode)
+     */
+    generateCoastline(config: Partial<{
+        noiseEnabled: boolean;
+        noiseSize: number;
+        noiseAngle: number;
+        numRivers: number;
+    }>): Promise<void> {
+        // Configure regular coastline parameters
+        const waterParams = this.mainGui.getCoastlineParams();
+        
+        // Set generation mode to regular coastline
+        waterParams.useHeightmapIslands = false;
+        waterParams.useSolidLandmasses = false;
+        
+        // Apply configuration
+        if (config.noiseEnabled !== undefined) {
+            waterParams.coastNoise.noiseEnabled = config.noiseEnabled;
+        }
+        if (config.noiseSize !== undefined) {
+            waterParams.coastNoise.noiseSize = config.noiseSize;
+        }
+        if (config.noiseAngle !== undefined) {
+            waterParams.coastNoise.noiseAngle = config.noiseAngle;
+        }
+        if (config.numRivers !== undefined) {
+            waterParams.numRivers = config.numRivers;
+        }
+
+        // Ensure tensor field is set up
+        if (this.firstGenerate) {
+            this.tensorField.setRecommended();
+            this.firstGenerate = false;
+        }
+
+        // Generate coastline
+        this.mainGui.generateCoastline();
+        
+        return Promise.resolve();
+    }
+
+    /**
+     * Generate complete map with everything
+     */
+    generateEverything(): Promise<void> {
+        // Ensure tensor field is set up
+        if (this.firstGenerate) {
+            this.tensorField.setRecommended();
+            this.firstGenerate = false;
+        }
+        
+        return this.mainGui.generateEverything();
+    }
+
+    /**
+     * Clear all generated content
+     */
+    clearAll(): void {
+        // Reset tensor field
+        this.tensorField.reset();
+        this.tensorField.setRecommended();
+        
+        // Clear all roads and features
+        this.mainGui.clearAll();
+        
+        // Force redraw
+        this.previousFrameDrawTensor = true;
+    }
+
+    /**
+     * Configure tensor field
+     */
+    setTensorField(config: {
+        addGrid?: boolean;
+        addRadial?: boolean;
+        useRecommended?: boolean;
+    }): void {
+        if (config.useRecommended) {
+            this.tensorField.setRecommended();
+        }
+        
+        if (config.addGrid) {
+            this.tensorField.addGrid();
+        }
+        
+        if (config.addRadial) {
+            this.tensorField.addRadial();
+        }
+    }
+
+    /**
+     * Access to main GUI for advanced operations
+     */
+    getMainGUI(): MainGUI {
+        return this.mainGui;
+    }
+
+    /**
+     * Access to tensor field for advanced operations
+     */
+    getTensorField(): TensorFieldGUI {
+        return this.tensorField;
+    }
 }
 
 // Add log to window so we can use log.setlevel from the console
 (window as any).log = log;
+
+// Global variable to store main instance
+let mainInstance: Main;
+
 window.addEventListener('load', (): void => {
-    new Main();
+    mainInstance = new Main();
+    // Expose island generation API to window
+    (window as any).MapGeneratorAPI = {
+        // Generate heightmap islands programmatically
+        generateHeightmapIslands: (config?: Partial<{
+            numIslands: number;
+            baseSize: number;
+            sizeVariation: number;
+            smoothness: number;
+            seaLevel: number;
+            beachLevel: number;
+            worldScale: number;
+            falloffFactor: number;
+            volcanoMode: boolean;
+            atolloMode: boolean;
+            noiseEnabled: boolean;
+            noiseSize: number;
+            noiseAngle: number;
+        }>) => {
+            return mainInstance.generateHeightmapIslands(config || {});
+        },
+
+        // Generate solid landmasses programmatically  
+        generateSolidLandmasses: (config?: Partial<{
+            landmassType: 'peninsula' | 'island_chain' | 'continent' | 'archipelago';
+            primaryLandmassSize: number;
+            coastalComplexity: number;
+            developableAreaRatio: number;
+            secondaryLandmassesEnabled: boolean;
+            secondaryLandmassCount: number;
+        }>) => {
+            return mainInstance.generateSolidLandmasses(config || {});
+        },
+
+        // Generate regular coastline (continental mode)
+        generateCoastline: (config?: Partial<{
+            noiseEnabled: boolean;
+            noiseSize: number;
+            noiseAngle: number;
+            numRivers: number;
+        }>) => {
+            return mainInstance.generateCoastline(config || {});
+        },
+
+        // Complete generation pipeline
+        generateEverything: () => {
+            return mainInstance.generateEverything();
+        },
+
+        // Clear all generated content
+        clearAll: () => {
+            return mainInstance.clearAll();
+        },
+
+        // Set tensor field configuration
+        setTensorField: (config?: {
+            addGrid?: boolean;
+            addRadial?: boolean;
+            useRecommended?: boolean;
+        }) => {
+            return mainInstance.setTensorField(config || {});
+        },
+
+        // Access to low-level components
+        getMainGUI: () => mainInstance.getMainGUI(),
+        getTensorField: () => mainInstance.getTensorField(),
+    };
 });

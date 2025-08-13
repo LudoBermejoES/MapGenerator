@@ -548,527 +548,610 @@ initIslandFolder(): void {
 3. Performance optimizations
 4. Advanced UI features
 
-## Strategy 4: Heightmap-Based Island Generation (Diamond-Square Algorithm)
+## Strategy 4: Solid Landmass Generation (Recommended for Solid Landmasses)
 
 ### Approach Overview
-Generate islands using heightmap-based terrain generation (Diamond-Square algorithm) rather than streamline integration. This approach creates geologically realistic islands with natural terrain features by extracting coastlines from elevation data.
+Generate solid, cohesive landmasses using a multi-layered approach that prioritizes creating substantial, realistic land areas with natural boundaries. This strategy focuses on creating landmasses that feel geographically authentic and provide ample space for urban development.
 
-**Reference**: Inspired by https://qiao.github.io/fractal-terrain-generator/ using Diamond-Square fractal terrain generation.
+**Core Philosophy**: Instead of generating water features that define land negatively, this approach generates land features positively, ensuring solid, developable landmasses are the primary focus.
 
-### Core Concept
-Instead of tensor field integration, generate a heightmap using the Diamond-Square algorithm and extract island coastlines through elevation thresholding. This creates more realistic island topography with natural features like peaks, valleys, and varied coastlines.
+### Key Design Principles
+1. **Land-First Generation**: Start with solid landmass shapes, then carve out water features
+2. **Geological Realism**: Use natural formation patterns (peninsulas, bays, archipelagos)
+3. **Development Priority**: Ensure sufficient flat, developable land for road networks and buildings
+4. **Hierarchical Complexity**: Build from simple shapes to complex coastlines through iterative refinement
 
 #### Implementation Strategy
 
-**Phase 1: Diamond-Square Integration**
+**Phase 1: Landmass Foundation Generation**
 ```typescript
-interface HeightmapIslandParams extends StreamlineParams {
-    useHeightmapIslands: boolean;
-    heightmapIslands: {
-        numIslands: number;
-        baseSize: number;           // Heightmap grid size (64, 128, 256, etc.)
-        sizeVariation: number;      // ±variation in island size
-        smoothness: number;         // 0.1-2.0 terrain roughness
-        seaLevel: number;           // 0.3-0.7 coastline threshold
-        beachLevel: number;         // 0.4-0.8 beach zone threshold
-        volcanoMode: boolean;       // Creates mountainous islands
-        atolloMode: boolean;        // Creates ring-shaped islands
+interface SolidLandmassParams extends StreamlineParams {
+    useSolidLandmasses: boolean;
+    landmassGeneration: {
+        landmassType: 'peninsula' | 'island_chain' | 'continent' | 'archipelago';
+        primaryLandmassSize: number;        // 0.3-0.8 of world area
+        coastalComplexity: number;          // 0.1-1.0 coastline detail level
+        developableAreaRatio: number;       // 0.4-0.8 minimum flat land percentage
+        naturalFeatures: {
+            bays: { enabled: boolean; count: number; depth: number; };
+            peninsulas: { enabled: boolean; count: number; length: number; };
+            capes: { enabled: boolean; count: number; prominence: number; };
+            inlets: { enabled: boolean; count: number; depth: number; };
+        };
+        secondaryLandmasses: {
+            enabled: boolean;
+            count: number;              // Number of smaller islands/landmasses
+            sizeRange: [number, number]; // Size relative to primary landmass
+            proximityFactor: number;     // How close to main landmass (0-1)
+        };
     };
 }
 
-class DiamondSquareIslandGenerator extends WaterGenerator {
-    private generateHeightmap(size: number, smoothness: number): number[][] {
-        // Adapted from terrain.js Diamond-Square algorithm
-        const map: number[][] = [];
+class SolidLandmassGenerator extends WaterGenerator {
+    private _primaryLandmass: Vector[] = [];
+    private _secondaryLandmasses: Vector[][] = [];
+    private _developableAreas: Vector[][] = [];
+    private _naturalHarbors: Vector[] = [];
+    
+    createSolidLandmasses(): void {
+        // Step 1: Generate primary landmass foundation
+        this._primaryLandmass = this.generatePrimaryLandmass();
         
-        // Initialize grid
-        for (let i = 0; i <= size; i++) {
-            map[i] = new Array(size + 1).fill(0);
+        // Step 2: Add natural coastal features
+        this._primaryLandmass = this.addCoastalFeatures(this._primaryLandmass);
+        
+        // Step 3: Generate secondary landmasses if enabled
+        if (this.params.landmassGeneration.secondaryLandmasses.enabled) {
+            this._secondaryLandmasses = this.generateSecondaryLandmasses();
         }
         
-        // Diamond-Square algorithm implementation
-        this.diamondSquare(map, size, smoothness);
-        return map;
+        // Step 4: Identify and preserve developable areas
+        this._developableAreas = this.identifyDevelopableAreas();
+        
+        // Step 5: Create natural harbors and bays
+        this._naturalHarbors = this.createNaturalHarbors();
+        
+        // Step 6: Generate sea polygon as negative space
+        this._seaPolygon = this.generateSeaFromLandmasses();
+        
+        // Step 7: Update tensor field with solid landmasses
+        this.updateTensorFieldForLandmasses();
     }
     
-    private diamondSquare(map: number[][], size: number, smoothness: number): void {
-        let step = size;
-        let scale = smoothness;
+    private generatePrimaryLandmass(): Vector[] {
+        const centerX = this.worldDimensions.x * 0.5;
+        const centerY = this.worldDimensions.y * 0.5;
+        const center = new Vector(centerX, centerY).add(this.origin);
         
-        // Initialize corners with random values
-        map[0][0] = Math.random() - 0.5;
-        map[0][size] = Math.random() - 0.5;
-        map[size][0] = Math.random() - 0.5;
-        map[size][size] = Math.random() - 0.5;
-        
-        while (step > 1) {
-            const half = step / 2;
-            
-            // Diamond step
-            for (let x = half; x < size; x += step) {
-                for (let y = half; y < size; y += step) {
-                    const avg = (
-                        map[x - half][y - half] + 
-                        map[x + half][y - half] + 
-                        map[x - half][y + half] + 
-                        map[x + half][y + half]
-                    ) / 4;
-                    map[x][y] = avg + (Math.random() - 0.5) * scale;
-                }
-            }
-            
-            // Square step
-            for (let x = 0; x <= size; x += half) {
-                for (let y = (x + half) % step; y <= size; y += step) {
-                    const avg = this.getSquareAverage(map, x, y, half, size);
-                    map[x][y] = avg + (Math.random() - 0.5) * scale;
-                }
-            }
-            
-            step /= 2;
-            scale /= 2;
+        switch (this.params.landmassGeneration.landmassType) {
+            case 'peninsula':
+                return this.generatePeninsula(center);
+            case 'continent':
+                return this.generateContinent(center);
+            case 'island_chain':
+                return this.generateMainIsland(center);
+            case 'archipelago':
+                return this.generateArchipelagoCore(center);
+            default:
+                return this.generateContinent(center);
         }
     }
     
-    private getSquareAverage(map: number[][], x: number, y: number, half: number, size: number): number {
-        let sum = 0;
-        let count = 0;
+    private generateContinent(center: Vector): Vector[] {
+        const size = this.params.landmassGeneration.primaryLandmassSize;
+        const baseRadius = Math.min(this.worldDimensions.x, this.worldDimensions.y) * size * 0.4;
         
-        const neighbors = [
-            [x - half, y], [x + half, y], [x, y - half], [x, y + half]
-        ];
+        // Create organic continent shape using multiple overlapping circles
+        const controlPoints = this.generateContinentControlPoints(center, baseRadius);
+        const roughShape = this.createOrganicShape(controlPoints, baseRadius);
         
-        for (const [nx, ny] of neighbors) {
-            if (nx >= 0 && nx <= size && ny >= 0 && ny <= size) {
-                sum += map[nx][ny];
-                count++;
-            }
+        // Ensure continent reaches at least one world edge for realistic geography
+        return this.extendToWorldEdge(roughShape);
+    }
+    
+    private generatePeninsula(center: Vector): Vector[] {
+        const size = this.params.landmassGeneration.primaryLandmassSize;
+        const baseRadius = Math.min(this.worldDimensions.x, this.worldDimensions.y) * size * 0.3;
+        
+        // Peninsula extends from one edge of the world
+        const edgeConnection = this.selectRandomWorldEdge();
+        const peninsulaBase = this.createPeninsulaBase(edgeConnection);
+        const peninsulaBody = this.createOrganicShape([center], baseRadius);
+        
+        // Connect base to body with natural transition
+        return this.connectLandmassShapes(peninsulaBase, peninsulaBody);
+    }
+    
+    private generateContinentControlPoints(center: Vector, baseRadius: number): Vector[] {
+        const numPoints = 8 + Math.floor(Math.random() * 4); // 8-12 control points
+        const points: Vector[] = [];
+        
+        for (let i = 0; i < numPoints; i++) {
+            const angle = (i / numPoints) * Math.PI * 2;
+            const radiusVariation = 0.7 + Math.random() * 0.6; // 70%-130% of base radius
+            const radius = baseRadius * radiusVariation;
+            
+            const x = center.x + Math.cos(angle) * radius;
+            const y = center.y + Math.sin(angle) * radius;
+            points.push(new Vector(x, y));
         }
         
-        return count > 0 ? sum / count : 0;
+        return points;
+    }
+    
+    private createOrganicShape(controlPoints: Vector[], baseRadius: number): Vector[] {
+        if (controlPoints.length === 1) {
+            // Single point - create circular base with organic variation
+            return this.createOrganicCircle(controlPoints[0], baseRadius);
+        }
+        
+        // Multiple points - create convex hull then add organic variation
+        const hull = this.computeConvexHull(controlPoints);
+        return this.addOrganicVariation(hull, baseRadius * 0.2);
+    }
+    
+    private createOrganicCircle(center: Vector, radius: number): Vector[] {
+        const points: Vector[] = [];
+        const numSegments = 32 + Math.floor(Math.random() * 16); // 32-48 segments
+        
+        for (let i = 0; i < numSegments; i++) {
+            const angle = (i / numSegments) * Math.PI * 2;
+            
+            // Add organic variation using multiple noise octaves
+            const radiusVariation = this.getOrganicRadiusVariation(angle, radius);
+            const actualRadius = radius * radiusVariation;
+            
+            const x = center.x + Math.cos(angle) * actualRadius;
+            const y = center.y + Math.sin(angle) * actualRadius;
+            points.push(new Vector(x, y));
+        }
+        
+        return points;
+    }
+    
+    private getOrganicRadiusVariation(angle: number, baseRadius: number): number {
+        // Multiple octaves of noise for natural coastline variation
+        let variation = 1.0;
+        
+        // Large-scale features (bays, peninsulas)
+        variation += Math.sin(angle * 3 + Math.random() * Math.PI) * 0.3;
+        variation += Math.cos(angle * 5 + Math.random() * Math.PI) * 0.2;
+        
+        // Medium-scale features (headlands, coves)
+        variation += Math.sin(angle * 8 + Math.random() * Math.PI) * 0.15;
+        variation += Math.cos(angle * 12 + Math.random() * Math.PI) * 0.1;
+        
+        // Small-scale features (detailed coastline)
+        if (this.params.landmassGeneration.coastalComplexity > 0.5) {
+            variation += Math.sin(angle * 20 + Math.random() * Math.PI) * 0.08;
+            variation += Math.cos(angle * 30 + Math.random() * Math.PI) * 0.05;
+        }
+        
+        // Ensure variation stays within reasonable bounds
+        return Math.max(0.4, Math.min(1.6, variation));
     }
 }
 ```
 
-**Phase 2: Coastline Extraction Using Marching Squares**
+**Phase 2: Coastal Feature Generation**
 ```typescript
-class CoastlineExtractor {
-    private extractCoastline(heightmap: number[][], seaLevel: number): Vector[] {
-        // Marching squares algorithm for contour extraction
-        const coastline: Vector[] = [];
-        const width = heightmap.length - 1;
-        const height = heightmap[0].length - 1;
+class CoastalFeatureGenerator {
+    addCoastalFeatures(landmass: Vector[]): Vector[] {
+        let enhancedCoastline = landmass.slice();
         
-        // Marching squares lookup table
-        const edgeTable = this.createMarchingSquaresTable();
+        // Add bays
+        if (this.params.landmassGeneration.naturalFeatures.bays.enabled) {
+            enhancedCoastline = this.addBays(enhancedCoastline);
+        }
         
-        for (let x = 0; x < width; x++) {
-            for (let y = 0; y < height; y++) {
-                const config = this.getGridConfiguration(heightmap, x, y, seaLevel);
-                const segments = this.getEdgeSegments(edgeTable[config], x, y);
-                
-                if (segments.length > 0) {
-                    coastline.push(...segments);
-                }
+        // Add peninsulas
+        if (this.params.landmassGeneration.naturalFeatures.peninsulas.enabled) {
+            enhancedCoastline = this.addPeninsulas(enhancedCoastline);
+        }
+        
+        // Add capes and headlands
+        if (this.params.landmassGeneration.naturalFeatures.capes.enabled) {
+            enhancedCoastline = this.addCapes(enhancedCoastline);
+        }
+        
+        // Add inlets and fjords
+        if (this.params.landmassGeneration.naturalFeatures.inlets.enabled) {
+            enhancedCoastline = this.addInlets(enhancedCoastline);
+        }
+        
+        return enhancedCoastline;
+    }
+    
+    private addBays(coastline: Vector[]): Vector[] {
+        const bayCount = this.params.landmassGeneration.naturalFeatures.bays.count;
+        const bayDepth = this.params.landmassGeneration.naturalFeatures.bays.depth;
+        
+        let modifiedCoastline = coastline.slice();
+        
+        for (let i = 0; i < bayCount; i++) {
+            const bayLocation = this.selectBayLocation(modifiedCoastline);
+            if (bayLocation) {
+                modifiedCoastline = this.carveBay(modifiedCoastline, bayLocation, bayDepth);
             }
         }
         
-        return this.connectSegments(coastline);
+        return modifiedCoastline;
     }
     
-    private getGridConfiguration(heightmap: number[][], x: number, y: number, threshold: number): number {
-        let config = 0;
+    private selectBayLocation(coastline: Vector[]): {index: number, position: Vector, normal: Vector} | null {
+        // Find suitable locations for bays (areas with low curvature)
+        const candidates: {index: number, position: Vector, normal: Vector, curvature: number}[] = [];
         
-        // Check 2x2 grid cell corners
-        if (heightmap[x][y] > threshold) config |= 1;           // Bottom-left
-        if (heightmap[x + 1][y] > threshold) config |= 2;       // Bottom-right  
-        if (heightmap[x + 1][y + 1] > threshold) config |= 4;   // Top-right
-        if (heightmap[x][y + 1] > threshold) config |= 8;       // Top-left
-        
-        return config;
-    }
-    
-    private createMarchingSquaresTable(): Vector[][][] {
-        // Standard marching squares edge configuration table
-        // Returns array of line segments for each of 16 possible configurations
-        return [
-            [], // 0: No edges
-            [[new Vector(0, 0.5), new Vector(0.5, 0)]], // 1: Bottom-left corner
-            [[new Vector(0.5, 0), new Vector(1, 0.5)]], // 2: Bottom-right corner
-            [[new Vector(0, 0.5), new Vector(1, 0.5)]], // 3: Bottom edge
-            // ... complete table for all 16 configurations
-        ];
-    }
-    
-    private connectSegments(segments: Vector[]): Vector[] {
-        // Connect individual segments into closed polygon
-        if (segments.length === 0) return [];
-        
-        const polygon: Vector[] = [segments[0]];
-        const remaining = segments.slice(1);
-        
-        while (remaining.length > 0) {
-            const current = polygon[polygon.length - 1];
-            let bestIndex = -1;
-            let bestDistance = Infinity;
+        for (let i = 2; i < coastline.length - 2; i++) {
+            const prev = coastline[i - 1];
+            const current = coastline[i];
+            const next = coastline[i + 1];
             
-            // Find closest segment endpoint
-            for (let i = 0; i < remaining.length; i++) {
-                const dist = current.distanceTo(remaining[i]);
-                if (dist < bestDistance) {
-                    bestDistance = dist;
-                    bestIndex = i;
-                }
+            const curvature = this.calculateCurvature(prev, current, next);
+            const normal = this.calculateInwardNormal(prev, current, next);
+            
+            // Prefer locations with low curvature (straight-ish coastline)
+            if (Math.abs(curvature) < 0.3) {
+                candidates.push({index: i, position: current, normal, curvature: Math.abs(curvature)});
             }
+        }
+        
+        if (candidates.length === 0) return null;
+        
+        // Select candidate with lowest curvature
+        candidates.sort((a, b) => a.curvature - b.curvature);
+        return candidates[0];
+    }
+    
+    private carveBay(coastline: Vector[], location: {index: number, position: Vector, normal: Vector}, depth: number): Vector[] {
+        const bayWidth = depth * 1.5; // Bay width proportional to depth
+        const bayPoints = this.generateBayShape(location.position, location.normal, depth, bayWidth);
+        
+        // Insert bay points into coastline
+        const newCoastline = [
+            ...coastline.slice(0, location.index),
+            ...bayPoints,
+            ...coastline.slice(location.index + 1)
+        ];
+        
+        return newCoastline;
+    }
+    
+    private generateBayShape(center: Vector, inwardNormal: Vector, depth: number, width: number): Vector[] {
+        const bayPoints: Vector[] = [];
+        const numPoints = 8; // Points along bay curve
+        
+        // Create smooth bay curve using quadratic bezier
+        const bayEnd = center.clone().add(inwardNormal.clone().multiplyScalar(depth));
+        const leftControl = center.clone().add(inwardNormal.clone().multiplyScalar(depth * 0.3))
+            .add(inwardNormal.clone().rotate(Math.PI / 2).multiplyScalar(width * 0.5));
+        const rightControl = center.clone().add(inwardNormal.clone().multiplyScalar(depth * 0.3))
+            .add(inwardNormal.clone().rotate(-Math.PI / 2).multiplyScalar(width * 0.5));
+        
+        // Generate points along bay perimeter
+        for (let i = 0; i <= numPoints; i++) {
+            const t = i / numPoints;
+            let point: Vector;
             
-            if (bestIndex !== -1) {
-                polygon.push(remaining[bestIndex]);
-                remaining.splice(bestIndex, 1);
+            if (t <= 0.5) {
+                // Left side of bay
+                const localT = t * 2;
+                point = this.quadraticBezier(center, leftControl, bayEnd, localT);
             } else {
-                break; // No more connected segments
+                // Right side of bay
+                const localT = (t - 0.5) * 2;
+                point = this.quadraticBezier(bayEnd, rightControl, center, localT);
             }
+            
+            bayPoints.push(point);
         }
         
-        return polygon;
+        return bayPoints;
+    }
+    
+    private quadraticBezier(p0: Vector, p1: Vector, p2: Vector, t: number): Vector {
+        const oneMinusT = 1 - t;
+        return p0.clone().multiplyScalar(oneMinusT * oneMinusT)
+            .add(p1.clone().multiplyScalar(2 * oneMinusT * t))
+            .add(p2.clone().multiplyScalar(t * t));
     }
 }
 ```
 
-**Phase 3: Island Feature Extraction**
+**Phase 3: Developable Area Identification**
 ```typescript
-interface IslandFeatures {
-    coastline: Vector[];
-    beaches: Vector[][];    // Multiple beach zones
-    peaks: Vector[];        // Mountain/volcano peaks
-    valleys: Vector[][];    // River valleys
-    heightmap: number[][];  // Original elevation data
+class DevelopableAreaAnalyzer {
+    identifyDevelopableAreas(): Vector[][] {
+        const developableAreas: Vector[][] = [];
+        const minDevelopableRatio = this.params.landmassGeneration.developableAreaRatio;
+        
+        // Analyze primary landmass for developable regions
+        const primaryAreas = this.analyzeLandmassForDevelopment(this._primaryLandmass);
+        developableAreas.push(...primaryAreas);
+        
+        // Analyze secondary landmasses
+        for (const landmass of this._secondaryLandmasses) {
+            const secondaryAreas = this.analyzeLandmassForDevelopment(landmass);
+            developableAreas.push(...secondaryAreas);
+        }
+        
+        // Ensure minimum developable area ratio is met
+        const totalLandArea = this.calculateTotalLandArea();
+        const totalDevelopableArea = this.calculateTotalDevelopableArea(developableAreas);
+        
+        if (totalDevelopableArea / totalLandArea < minDevelopableRatio) {
+            // Add additional developable areas to meet minimum ratio
+            const additionalAreas = this.createAdditionalDevelopableAreas(
+                totalLandArea * minDevelopableRatio - totalDevelopableArea
+            );
+            developableAreas.push(...additionalAreas);
+        }
+        
+        return developableAreas;
+    }
+    
+    private analyzeLandmassForDevelopment(landmass: Vector[]): Vector[][] {
+        const developableRegions: Vector[][] = [];
+        
+        // Use medial axis transform to find interior regions suitable for development
+        const medialAxis = this.computeMedialAxis(landmass);
+        const developmentZones = this.extractDevelopmentZones(medialAxis, landmass);
+        
+        // Filter zones by size and shape suitability
+        for (const zone of developmentZones) {
+            if (this.isDevelopmentSuitable(zone)) {
+                developableRegions.push(zone);
+            }
+        }
+        
+        return developableRegions;
+    }
+    
+    private isDevelopmentSuitable(area: Vector[]): boolean {
+        const areaSize = this.calculatePolygonArea(area);
+        const perimeter = this.calculatePolygonPerimeter(area);
+        const compactness = (4 * Math.PI * areaSize) / (perimeter * perimeter);
+        
+        // Suitable areas are large enough and reasonably compact
+        const minArea = 10000; // Minimum area for development
+        const minCompactness = 0.3; // Minimum shape compactness
+        
+        return areaSize >= minArea && compactness >= minCompactness;
+    }
+    
+    private computeMedialAxis(polygon: Vector[]): Vector[] {
+        // Simplified medial axis computation using Voronoi diagram
+        // This identifies the "spine" of the landmass - areas furthest from coastline
+        const voronoiSites = this.samplePolygonBoundary(polygon, 50);
+        const voronoi = this.computeVoronoi(voronoiSites);
+        
+        // Extract internal Voronoi edges as medial axis approximation
+        return this.extractInternalVoronoiEdges(voronoi, polygon);
+    }
 }
+```
 
-class IslandFeatureExtractor {
-    extractIslandFeatures(heightmap: number[][], params: HeightmapIslandParams): IslandFeatures {
-        const coastline = this.extractCoastline(heightmap, params.seaLevel);
-        const beaches = this.extractBeachZones(heightmap, params.seaLevel, params.beachLevel);
-        const peaks = this.findPeaks(heightmap, 0.8);
-        const valleys = this.findValleys(heightmap, params.seaLevel + 0.1);
+**Phase 4: Natural Harbor Generation**
+```typescript
+class NaturalHarborGenerator {
+    createNaturalHarbors(): Vector[] {
+        const harbors: Vector[] = [];
         
-        return { coastline, beaches, peaks, valleys, heightmap };
+        // Identify potential harbor locations in bays and protected areas
+        const bayLocations = this.identifyBayLocations();
+        const protectedAreas = this.identifyProtectedCoastalAreas();
+        
+        // Create harbors in most suitable locations
+        const harborCandidates = [...bayLocations, ...protectedAreas];
+        harborCandidates.sort((a, b) => b.suitability - a.suitability);
+        
+        const maxHarbors = Math.min(5, Math.floor(harborCandidates.length * 0.3));
+        for (let i = 0; i < maxHarbors; i++) {
+            harbors.push(harborCandidates[i].location);
+        }
+        
+        return harbors;
     }
     
-    private extractBeachZones(heightmap: number[][], seaLevel: number, beachLevel: number): Vector[][] {
-        // Extract contour lines between sea level and beach level
-        const beachContours: Vector[][] = [];
-        const steps = 3; // Number of beach elevation bands
+    private identifyBayLocations(): {location: Vector, suitability: number}[] {
+        const bayLocations: {location: Vector, suitability: number}[] = [];
         
-        for (let i = 1; i <= steps; i++) {
-            const level = seaLevel + (beachLevel - seaLevel) * (i / steps);
-            const contour = this.extractCoastline(heightmap, level);
-            if (contour.length > 0) {
-                beachContours.push(contour);
+        // Analyze coastline for bay-like indentations
+        for (let i = 0; i < this._primaryLandmass.length - 1; i++) {
+            const segment = {
+                start: this._primaryLandmass[i],
+                end: this._primaryLandmass[i + 1]
+            };
+            
+            const indentation = this.measureCoastalIndentation(segment, i);
+            if (indentation.depth > 50 && indentation.width > 100) {
+                const suitability = this.calculateHarborSuitability(indentation);
+                bayLocations.push({
+                    location: indentation.center,
+                    suitability
+                });
             }
         }
         
-        return beachContours;
+        return bayLocations;
     }
     
-    private findPeaks(heightmap: number[][], minHeight: number): Vector[] {
-        const peaks: Vector[] = [];
-        const width = heightmap.length;
-        const height = heightmap[0].length;
+    private calculateHarborSuitability(indentation: {center: Vector, depth: number, width: number, protection: number}): number {
+        // Harbor suitability based on depth, width, and protection from open ocean
+        const depthScore = Math.min(1, indentation.depth / 200);
+        const widthScore = Math.min(1, indentation.width / 300);
+        const protectionScore = indentation.protection;
         
-        for (let x = 1; x < width - 1; x++) {
-            for (let y = 1; y < height - 1; y++) {
-                const elevation = heightmap[x][y];
-                
-                if (elevation > minHeight && this.isLocalMaximum(heightmap, x, y)) {
-                    peaks.push(new Vector(x, y));
-                }
-            }
-        }
-        
-        return peaks;
+        return (depthScore * 0.4 + widthScore * 0.3 + protectionScore * 0.3);
     }
-    
-    private isLocalMaximum(heightmap: number[][], x: number, y: number): boolean {
-        const center = heightmap[x][y];
-        
-        // Check 3x3 neighborhood
-        for (let dx = -1; dx <= 1; dx++) {
-            for (let dy = -1; dy <= 1; dy++) {
-                if (dx === 0 && dy === 0) continue;
-                if (heightmap[x + dx][y + dy] >= center) {
-                    return false;
-                }
-            }
-        }
-        
+}
+```
+
+### Advantages of Strategy 4
+
+#### Primary Benefits
+1. **Guaranteed Solid Landmasses**: Land-first approach ensures substantial developable areas
+2. **Geological Realism**: Natural coastal features create believable geography
+3. **Development-Friendly**: Prioritizes areas suitable for road networks and buildings
+4. **Flexible Complexity**: Adjustable detail levels from simple to highly complex coastlines
+5. **Natural Harbors**: Automatically generates logical locations for ports and maritime features
+
+#### Technical Advantages
+- **Predictable Results**: Land-first generation eliminates failed coastline attempts
+- **Scalable Detail**: Coastal complexity can be adjusted without affecting core landmass
+- **Modular Features**: Natural features can be enabled/disabled independently
+- **Performance Optimized**: Avoids expensive retry loops of edge-reaching algorithms
+
+#### Urban Planning Benefits
+- **Road Network Continuity**: Solid landmasses ensure connected transportation networks
+- **Building Placement**: Ample flat areas for realistic urban development
+- **Natural Districts**: Bays and peninsulas create logical city districts
+- **Harbor Integration**: Natural harbors provide focal points for maritime districts
+
+### Implementation Roadmap
+
+#### Phase 1: Core Landmass Generation (Week 1-2)
+1. Implement basic continent and peninsula generation
+2. Add organic shape creation with natural variation
+3. Create coastal feature addition system
+4. Basic UI controls for landmass type selection
+
+#### Phase 2: Natural Features (Week 3-4)
+1. Implement bay and inlet carving
+2. Add peninsula and cape generation
+3. Create natural harbor identification
+4. Integrate with existing tensor field system
+
+#### Phase 3: Development Analysis (Week 5-6)
+1. Implement developable area identification
+2. Add medial axis computation for interior analysis
+3. Create area suitability scoring
+4. Integrate with road generation system
+
+#### Phase 4: Polish and Integration (Week 7-8)
+1. Advanced coastal complexity controls
+2. Secondary landmass generation
+3. Performance optimization
+4. Comprehensive testing and refinement
+
+This strategy prioritizes creating substantial, realistic landmasses that provide excellent foundations for urban development while maintaining natural geographic authenticity.
+
+### Technical Implementation Details
+
+#### Tensor Field Integration for Solid Landmasses
+
+**Land/Water Detection Updates**
+```typescript
+// Enhanced onLand method in TensorField
+onLand(point: Vector): boolean {
+    // Check if point is inside primary landmass
+    if (PolygonUtil.insidePolygon(point, this.primaryLandmass)) {
         return true;
     }
     
-    private findValleys(heightmap: number[][], maxHeight: number): Vector[][] {
-        // Find connected low-elevation areas (potential river valleys)
-        const valleys: Vector[][] = [];
-        const visited: boolean[][] = this.createBooleanGrid(heightmap.length, heightmap[0].length);
-        
-        for (let x = 0; x < heightmap.length; x++) {
-            for (let y = 0; y < heightmap[0].length; y++) {
-                if (!visited[x][y] && heightmap[x][y] < maxHeight) {
-                    const valley = this.floodFillValley(heightmap, visited, x, y, maxHeight);
-                    if (valley.length > 10) { // Minimum valley size
-                        valleys.push(valley);
-                    }
-                }
-            }
-        }
-        
-        return valleys;
-    }
-}
-```
-
-**Phase 4: Integration with Existing System**
-```typescript
-class HeightmapWaterGenerator extends WaterGenerator {
-    createIslandFromHeightmap(center: Vector, params: HeightmapIslandParams): IslandFeatures | null {
-        // Generate heightmap
-        const heightmap = this.generateHeightmap(params.baseSize, params.smoothness);
-        
-        // Apply island-specific modifications
-        if (params.volcanoMode) {
-            this.createVolcanicProfile(heightmap);
-        } else if (params.atolloMode) {
-            this.createAtollProfile(heightmap);
-        }
-        
-        // Extract features
-        const features = this.extractIslandFeatures(heightmap, params);
-        
-        // Translate to world coordinates
-        features.coastline = features.coastline.map(v => 
-            this.heightmapToWorld(v, center, params.baseSize)
-        );
-        
-        // Validate island
-        if (!this.isValidHeightmapIsland(features)) {
-            return null;
-        }
-        
-        return features;
-    }
-    
-    private createVolcanicProfile(heightmap: number[][]): void {
-        const center = Math.floor(heightmap.length / 2);
-        const maxRadius = center * 0.8;
-        
-        // Create central peak with radial falloff
-        for (let x = 0; x < heightmap.length; x++) {
-            for (let y = 0; y < heightmap[0].length; y++) {
-                const dx = x - center;
-                const dy = y - center;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                const normalizedDistance = distance / maxRadius;
-                
-                if (normalizedDistance <= 1) {
-                    // Volcanic elevation profile
-                    const volcanoHeight = Math.pow(1 - normalizedDistance, 2) * 0.8;
-                    heightmap[x][y] += volcanoHeight;
-                }
-            }
-        }
-    }
-    
-    private createAtollProfile(heightmap: number[][]): void {
-        const center = Math.floor(heightmap.length / 2);
-        const innerRadius = center * 0.3;
-        const outerRadius = center * 0.8;
-        
-        // Create ring-shaped island
-        for (let x = 0; x < heightmap.length; x++) {
-            for (let y = 0; y < heightmap[0].length; y++) {
-                const dx = x - center;
-                const dy = y - center;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                
-                if (distance >= innerRadius && distance <= outerRadius) {
-                    // Atoll ring elevation
-                    const ringPosition = (distance - innerRadius) / (outerRadius - innerRadius);
-                    const ringHeight = Math.sin(ringPosition * Math.PI) * 0.4;
-                    heightmap[x][y] += ringHeight;
-                } else if (distance < innerRadius) {
-                    // Central lagoon (below sea level)
-                    heightmap[x][y] -= 0.3;
-                }
-            }
-        }
-    }
-    
-    private heightmapToWorld(point: Vector, center: Vector, gridSize: number): Vector {
-        const scale = 500; // World units per heightmap cell
-        const worldX = center.x + (point.x - gridSize / 2) * scale;
-        const worldY = center.y + (point.y - gridSize / 2) * scale;
-        return new Vector(worldX, worldY);
-    }
-}
-```
-
-### Advantages Over Previous Strategies
-
-#### 1. Geological Realism
-- **Natural Terrain**: Islands have realistic elevation gradients and topography
-- **Erosion Patterns**: Diamond-Square creates natural valleys and ridges
-- **Volcanic Features**: Supports mountainous island generation
-- **Atoll Support**: Ring-shaped islands with central lagoons
-- **Beach Zones**: Multiple elevation bands create realistic coastal transitions
-
-#### 2. Rich Feature Generation  
-- **Multiple Contours**: Extract coastlines, beaches, elevation zones automatically
-- **Peak Identification**: Automatic mountain/volcano placement for 3D modeling
-- **Valley Systems**: Natural river valleys and drainage patterns
-- **Varied Coastlines**: Different smoothness parameters create diverse island types
-- **Terrain-Aware Roads**: Road networks can follow natural terrain features
-
-#### 3. Performance and Reliability
-- **Predictable Generation**: No retry logic needed - always produces valid islands
-- **Parallel Processing**: Heightmap generation can be parallelized
-- **Cached Results**: Heightmaps can be pre-generated and reused
-- **Scalable Detail**: Different grid sizes for various island complexities
-- **Memory Efficient**: Single heightmap generates multiple feature types
-
-#### 4. Integration Benefits
-- **Tensor Field Enhancement**: Terrain slopes can influence road generation
-- **Building Placement**: Elevation data improves building placement realism
-- **3D Export**: Heightmap data directly usable for STL export
-- **Visual Enhancement**: Elevation-based shading and coloring
-
-### Implementation Strategy for Existing Codebase
-
-#### Phase 1: Diamond-Square Integration (1 week)
-1. **Adapt terrain.js Algorithm**: Port Diamond-Square implementation to TypeScript
-2. **Basic Heightmap Generation**: Create simple heightmap generation function
-3. **Parameter Testing**: Test different smoothness and size parameters
-4. **Visual Debug**: Render heightmaps as grayscale images for validation
-
-#### Phase 2: Coastline Extraction (1 week)  
-1. **Marching Squares Implementation**: Create contour extraction algorithm
-2. **Segment Connection**: Implement polygon creation from line segments
-3. **Multiple Contours**: Extract coastlines, beaches, elevation bands
-4. **Quality Validation**: Ensure closed, non-self-intersecting polygons
-
-#### Phase 3: Feature Integration (1 week)
-1. **Island Variants**: Implement volcanic and atoll generation modes
-2. **World Coordinate Translation**: Convert heightmap coordinates to world space
-3. **Tensor Field Integration**: Update `onLand()` method for heightmap islands
-4. **Rendering Integration**: Update Style classes for multi-contour rendering
-
-#### Phase 4: UI and Polish (1 week)
-1. **GUI Controls**: Add heightmap island parameters to WaterGUI
-2. **Real-time Preview**: Show heightmap visualization during generation
-3. **Export Enhancement**: Include elevation data in STL exports
-4. **Performance Optimization**: Optimize for multiple island generation
-
-### Integration Points with Existing System
-
-#### WaterGenerator Extension
-```typescript
-// Enhanced WaterParams
-interface WaterParams extends StreamlineParams {
-    coastNoise: NoiseStreamlineParams;
-    riverNoise: NoiseStreamlineParams;
-    riverBankSize: number;
-    riverSize: number;
-    
-    // Add heightmap island support
-    useHeightmapIslands: boolean;
-    heightmapIslandParams: HeightmapIslandParams;
-}
-
-// Extended createCoast method
-createCoast(): void {
-    if (this.params.useHeightmapIslands) {
-        this.createHeightmapIslands();
-    } else {
-        // Existing streamline-based coastline generation
-        this.createStreamlineCoast();
-    }
-}
-```
-
-#### TensorField Enhancement
-```typescript
-// Enhanced land detection with elevation awareness
-onLand(point: Vector): boolean {
-    const inSea = PolygonUtil.insidePolygon(point, this.sea);
-    if (inSea) return false;
-    
-    // Check heightmap islands
-    for (const island of this.heightmapIslands) {
-        if (PolygonUtil.insidePolygon(point, island.coastline)) {
+    // Check secondary landmasses
+    for (const landmass of this.secondaryLandmasses) {
+        if (PolygonUtil.insidePolygon(point, landmass)) {
             return true;
         }
     }
     
-    // Existing logic for rivers and streamline islands
-    // ...
-}
-
-// Terrain-aware tensor field modification
-sampleTensorAtPoint(point: Vector): Tensor {
-    const baseTensor = super.sampleTensorAtPoint(point);
-    
-    // Modify tensor based on terrain slope for heightmap islands
-    for (const island of this.heightmapIslands) {
-        if (PolygonUtil.insidePolygon(point, island.coastline)) {
-            const slope = this.getTerrainSlope(point, island.heightmap);
-            const slopeInfluence = this.createSlopeInfluenceTensor(slope);
-            return baseTensor.combine(slopeInfluence, 0.3);
-        }
-    }
-    
-    return baseTensor;
+    // Point is in water
+    return false;
 }
 ```
 
-### Advantages for MapGenerator Users
+#### Road Generation Considerations
+- **Landmass Continuity**: Roads can traverse entire landmass without water barriers
+- **Natural Routing**: Roads follow coastlines and connect natural harbors
+- **Development Zones**: Road density higher in identified developable areas
+- **Coastal Access**: Automatic coastal road generation along major landmasses
 
-#### 1. More Realistic Islands
-- Islands have natural topography instead of flat terrain
-- Coastlines follow geological patterns
-- Natural harbors and bays from terrain features
-- Realistic beach and highland zones
+#### Rendering System Integration
+```typescript
+// Updated Style class for solid landmass rendering
+drawLandmasses(canvas: CanvasWrapper): void {
+    // Draw primary landmass
+    canvas.setFillStyle(this.colourScheme.bgColour);
+    canvas.drawPolygon(this.primaryLandmass);
+    
+    // Draw secondary landmasses
+    for (const landmass of this.secondaryLandmasses) {
+        canvas.drawPolygon(landmass);
+    }
+    
+    // Highlight developable areas
+    canvas.setFillStyle(this.colourScheme.developableAreaColour);
+    for (const area of this.developableAreas) {
+        canvas.drawPolygon(area);
+    }
+    
+    // Mark natural harbors
+    canvas.setFillStyle(this.colourScheme.harborColour);
+    for (const harbor of this.naturalHarbors) {
+        canvas.drawCircle(harbor, 20);
+    }
+}
+```
 
-#### 2. Enhanced 3D Models
-- Elevation data creates proper 3D island models
-- Natural terrain features for better STL exports
-- Volcanic peaks and atoll lagoons in 3D
-- Terrain-following building placement
+### Performance Considerations
 
-#### 3. Improved Road Networks
-- Roads follow natural valleys and ridges
-- Coastal roads follow terrain contours  
-- Mountain passes connect different regions
-- More realistic urban development patterns
+#### Computational Complexity
+- **Landmass Generation**: O(n) where n is coastline detail level
+- **Bay Carving**: O(b × m) where b is bay count, m is coastline segments
+- **Developable Area Analysis**: O(n²) for medial axis computation
+- **Harbor Identification**: O(n) coastline analysis
 
-#### 4. Visual Appeal
-- Elevation-based coloring and shading
-- Multiple coastal zone rendering
-- Natural-looking island silhouettes
-- Rich detail at all zoom levels
+#### Memory Usage
+- **Polygon Storage**: Efficient storage of landmass boundaries
+- **Spatial Indexing**: Optional spatial indexing for large landmasses
+- **Feature Caching**: Cache natural features for consistent results
 
-### Comparison with Previous Strategies
+#### Optimization Strategies
+- **Level of Detail**: Reduce coastline detail at high zoom levels
+- **Progressive Generation**: Generate features on-demand
+- **Parallel Processing**: Independent landmass generation
+- **Memory Pooling**: Reuse vector objects during generation
 
-| Aspect | Closed Loop Integration | Geometric Construction | Heightmap Generation |
-|--------|------------------------|------------------------|----------------------|
-| **Realism** | Moderate (follows tensor field) | Low (geometric patterns) | **High (geological features)** |
-| **Reliability** | Low (retry logic needed) | High (guaranteed results) | **High (always succeeds)** |
-| **Performance** | Slow (integration iterations) | Fast (simple math) | **Moderate (one-time computation)** |
-| **Variety** | High (tensor field variation) | Low (limited patterns) | **Very High (fractal variation)** |
-| **3D Export** | Poor (flat terrain) | Poor (flat terrain) | **Excellent (elevation data)** |
-| **Implementation** | Complex (new integration logic) | Simple (geometric ops) | **Moderate (algorithm adaptation)** |
+### User Interface Design
+
+#### UI Controls Extension
+```typescript
+// Enhanced WaterGUI controls for solid landmasses
+initSolidLandmassFolder(): void {
+    const landmassFolder = this.guiFolder.addFolder('Solid Landmasses');
+    
+    // Landmass type selection
+    landmassFolder.add(this.params.landmassGeneration, 'landmassType', 
+        ['peninsula', 'continent', 'island_chain', 'archipelago'])
+        .onChange(() => this.regenerateLandmasses());
+    
+    // Size and complexity
+    landmassFolder.add(this.params.landmassGeneration, 'primaryLandmassSize').min(0.3).max(0.8);
+    landmassFolder.add(this.params.landmassGeneration, 'coastalComplexity').min(0.1).max(1.0);
+    landmassFolder.add(this.params.landmassGeneration, 'developableAreaRatio').min(0.4).max(0.8);
+    
+    // Natural features
+    const featuresFolder = landmassFolder.addFolder('Natural Features');
+    featuresFolder.add(this.params.landmassGeneration.naturalFeatures.bays, 'enabled');
+    featuresFolder.add(this.params.landmassGeneration.naturalFeatures.bays, 'count').min(0).max(10);
+    featuresFolder.add(this.params.landmassGeneration.naturalFeatures.peninsulas, 'enabled');
+    featuresFolder.add(this.params.landmassGeneration.naturalFeatures.peninsulas, 'count').min(0).max(8);
+}
+```
 
 ## Conclusion
 
-Island generation in MapGenerator is not only possible but represents a natural extension of the existing sophisticated water generation system. While the original **Closed Loop Integration** approach provides good tensor field integration, the new **Heightmap-Based Generation** using the Diamond-Square algorithm offers superior realism, reliability, and feature richness.
+The **Solid Landmass Generation** strategy represents the optimal approach for creating substantial, developable landmasses in MapGenerator. By prioritizing land-first generation with natural coastal features, this strategy ensures:
 
-The heightmap approach creates geologically realistic islands with natural terrain features, eliminating the edge-reaching constraints of the current system while providing rich elevation data for enhanced 3D modeling, terrain-aware road generation, and visually appealing rendering.
+1. **Guaranteed Solid Landmasses**: Always produces substantial land areas suitable for urban development
+2. **Natural Geography**: Creates realistic coastlines with bays, peninsulas, and natural harbors
+3. **Development Focus**: Identifies and preserves areas optimal for road networks and buildings
+4. **Flexible Complexity**: Supports everything from simple continents to complex archipelagos
+
+This approach eliminates the fundamental limitations of the current edge-reaching coastline system while providing rich, natural landmasses that serve as excellent foundations for procedural city generation. The land-first philosophy ensures that urban development always has priority, while natural coastal features add geographic realism and visual appeal.
+
+**Recommendation**: Implement Strategy 4 as the primary island/landmass generation system, with the existing coastline system maintained as a "continental coastline" option for users who prefer the current behavior.
 
 The key insight is that islands benefit from terrain-based generation rather than pure streamline integration - they need realistic topography and elevation variation to create compelling and diverse landmasses that enhance the overall procedural generation experience.
 

@@ -74,6 +74,39 @@ export default class MainGUI {
             riverBankSize: 10,
             riverSize: 30,
             numRivers: 1,
+            // Island generation parameters
+            useSolidLandmasses: false,
+            useHeightmapIslands: false,
+            heightmapIslands: {
+                numIslands: 3,
+                baseSize: 256,
+                sizeVariation: 0.3,
+                smoothness: 0.5,
+                seaLevel: 0.0,
+                beachLevel: 0.1,
+                worldScale: 2.0,
+                falloffFactor: 2.0,
+                volcanoMode: false,
+                atolloMode: false
+            },
+            landmassGeneration: {
+                landmassType: 'continent' as const,
+                primaryLandmassSize: 0.6,
+                coastalComplexity: 0.7,
+                developableAreaRatio: 0.6,
+                naturalFeatures: {
+                    bays: { enabled: true, count: 2, depth: 0.3 },
+                    peninsulas: { enabled: true, count: 1, length: 0.4 },
+                    capes: { enabled: true, count: 3, prominence: 0.2 },
+                    inlets: { enabled: false, count: 0, depth: 0.1 }
+                },
+                secondaryLandmasses: {
+                    enabled: false,
+                    count: 2,
+                    sizeRange: [0.1, 0.3] as [number, number],
+                    proximityFactor: 0.7
+                }
+            }
         }, this.minorParams);
         this.coastlineParams.pathIterations = 10000;
         this.coastlineParams.simplifyTolerance = 10;

@@ -4,8 +4,10 @@
 import Util from '../util';
 import FieldIntegrator from '../impl/integrator';
 import {StreamlineParams} from '../impl/streamlines';
-import {WaterParams} from '../impl/water_generator';
+import {WaterParams, HeightmapIslandParams} from '../impl/water_generator';
 import WaterGenerator from '../impl/water_generator';
+import SolidLandmassGenerator, {SolidLandmassParams} from '../impl/solid_landmass_generator';
+import HeightmapIslandGenerator from '../impl/heightmap_island_generator';
 import Vector from '../vector';
 // import PolygonFinder from '../impl/polygon_finder'; // Unused
 // import PolygonUtil from '../impl/polygon_util'; // Unused
@@ -27,15 +29,65 @@ export default class WaterGUI extends RoadGUI {
                 folderName: string,
                 redraw: () => void) {
         super(params, integrator, guiFolder, closeTensorFolder, folderName, redraw);
-        this.streamlines = new WaterGenerator(
-            this.integrator, this.domainController.origin,
-            this.domainController.worldDimensions,
-            Object.assign({},this.params), this.tensorField);
+        this.streamlines = this.createWaterGenerator();
+    }
+
+    private createWaterGenerator(): WaterGenerator {
+        if (this.params.useSolidLandmasses) {
+            return new SolidLandmassGenerator(
+                this.integrator, this.domainController.origin,
+                this.domainController.worldDimensions,
+                Object.assign({}, this.params) as SolidLandmassParams, this.tensorField);
+        } else if (this.params.useHeightmapIslands) {
+            return new HeightmapIslandGenerator(
+                this.integrator, this.domainController.origin,
+                this.domainController.worldDimensions,
+                Object.assign({}, this.params), this.tensorField);
+        } else {
+            return new WaterGenerator(
+                this.integrator, this.domainController.origin,
+                this.domainController.worldDimensions,
+                Object.assign({}, this.params), this.tensorField);
+        }
     }
 
     initFolder(): WaterGUI {
         const folder = this.guiFolder.addFolder(this.folderName);
         folder.add({Generate: () => this.generateRoads()}, 'Generate');
+        
+        // Island generation mode controls
+        const islandModeFolder = folder.addFolder('Generation Mode');
+        islandModeFolder.add(this.params, 'useSolidLandmasses').name('Solid Landmasses');
+        islandModeFolder.add(this.params, 'useHeightmapIslands').name('Heightmap Islands');
+        
+        // Initialize island parameters if they don't exist
+        if (!this.params.heightmapIslands) {
+            this.params.heightmapIslands = {
+                numIslands: 3,
+                baseSize: 256,
+                sizeVariation: 0.3,
+                smoothness: 0.5,
+                seaLevel: 0.0,
+                beachLevel: 0.1,
+                worldScale: 2.0,
+                falloffFactor: 2.0,
+                volcanoMode: false,
+                atolloMode: false
+            };
+        }
+        
+        // Heightmap island controls
+        const heightmapFolder = folder.addFolder('Heightmap Islands');
+        heightmapFolder.add(this.params.heightmapIslands, 'numIslands').min(1).max(10).step(1);
+        heightmapFolder.add(this.params.heightmapIslands, 'baseSize').min(64).max(512).step(1);
+        heightmapFolder.add(this.params.heightmapIslands, 'sizeVariation').min(0).max(1).step(0.1);
+        heightmapFolder.add(this.params.heightmapIslands, 'smoothness').min(0.1).max(2.0).step(0.1);
+        heightmapFolder.add(this.params.heightmapIslands, 'seaLevel').min(-1).max(1).step(0.1);
+        heightmapFolder.add(this.params.heightmapIslands, 'beachLevel').min(-1).max(1).step(0.1);
+        heightmapFolder.add(this.params.heightmapIslands, 'worldScale').min(0.5).max(5.0).step(0.1);
+        heightmapFolder.add(this.params.heightmapIslands, 'falloffFactor').min(0.5).max(5.0).step(0.1);
+        heightmapFolder.add(this.params.heightmapIslands, 'volcanoMode').name('Volcano Mode');
+        heightmapFolder.add(this.params.heightmapIslands, 'atolloMode').name('Atoll Mode');
         
         const coastParamsFolder = folder.addFolder('CoastParams');
         coastParamsFolder.add(this.params.coastNoise, 'noiseEnabled');
@@ -57,10 +109,7 @@ export default class WaterGUI extends RoadGUI {
         this.preGenerateCallback();
 
         this.domainController.zoom = this.domainController.zoom / Util.DRAW_INFLATE_AMOUNT;
-        this.streamlines = new WaterGenerator(
-            this.integrator, this.domainController.origin,
-            this.domainController.worldDimensions,
-            Object.assign({},this.params), this.tensorField);
+        this.streamlines = this.createWaterGenerator();
         this.domainController.zoom = this.domainController.zoom * Util.DRAW_INFLATE_AMOUNT;
 
         this.streamlines.createCoast();

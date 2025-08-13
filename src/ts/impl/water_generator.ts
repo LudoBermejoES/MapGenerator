@@ -12,12 +12,48 @@ export interface WaterParams extends StreamlineParams {
     riverBankSize: number;
     riverSize: number;
     numRivers: number;
+    // Island generation parameters
+    useHeightmapIslands?: boolean;
+    heightmapIslands?: HeightmapIslandParams;
+    // Solid landmass generation parameters
+    useSolidLandmasses?: boolean;
+    landmassGeneration?: {
+        landmassType: 'peninsula' | 'island_chain' | 'continent' | 'archipelago';
+        primaryLandmassSize: number;        // 0.3-0.8 of world area
+        coastalComplexity: number;          // 0.1-1.0 coastline detail level
+        developableAreaRatio: number;       // 0.4-0.8 minimum flat land percentage
+        naturalFeatures: {
+            bays: { enabled: boolean; count: number; depth: number; };
+            peninsulas: { enabled: boolean; count: number; length: number; };
+            capes: { enabled: boolean; count: number; prominence: number; };
+            inlets: { enabled: boolean; count: number; depth: number; };
+        };
+        secondaryLandmasses: {
+            enabled: boolean;
+            count: number;              // Number of smaller islands/landmasses
+            sizeRange: [number, number]; // Size relative to primary landmass
+            proximityFactor: number;     // How close to main landmass (0-1)
+        };
+    };
 }
 
 export interface NoiseStreamlineParams {
     noiseEnabled: boolean;
     noiseSize: number;
     noiseAngle: number;
+}
+
+export interface HeightmapIslandParams {
+    numIslands: number;              // Number of islands to generate
+    baseSize: number;                // Base island size in heightmap pixels
+    sizeVariation: number;           // Size variation factor (0-1)
+    smoothness: number;              // Diamond-Square smoothness parameter
+    seaLevel: number;                // Height threshold for coastline (-1 to 1)
+    beachLevel: number;              // Height threshold for beaches (-1 to 1)
+    worldScale: number;              // Scale from heightmap to world coordinates
+    falloffFactor: number;           // Island edge falloff steepness
+    volcanoMode: boolean;            // Create volcanic island profiles
+    atolloMode: boolean;             // Create atoll-style islands with lagoons
 }
 
 /**

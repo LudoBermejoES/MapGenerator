@@ -6631,7 +6631,7 @@
   });
 
   // src/main.ts
-  var log9 = __toESM(require_loglevel());
+  var log11 = __toESM(require_loglevel());
 
   // node_modules/dat.gui/build/dat.gui.module.js
   function ___$insertStyle(css3) {
@@ -10077,8 +10077,8 @@
           divided.push(..._PolygonUtil.subdividePolygon(_PolygonUtil.polygonArrayToPolygon(s), minArea));
         }
         return divided;
-      } catch (error8) {
-        log2.error(error8);
+      } catch (error9) {
+        log2.error(error9);
         return [];
       }
     }
@@ -10093,8 +10093,8 @@
           return [];
         }
         return resized.getCoordinates().map((c) => new Vector(c.x, c.y));
-      } catch (error8) {
-        log2.error(error8);
+      } catch (error9) {
+        log2.error(error9);
         return [];
       }
     }
@@ -10151,6 +10151,28 @@
         outP.push(new Vector(p[2 * i], p[2 * i + 1]));
       }
       return outP;
+    }
+    /**
+     * Subtracts polygon2 from polygon1, returning the difference
+     * Used for creating sea polygons by subtracting landmasses from world bounds
+     */
+    static subtractPolygons(polygon1, polygon2) {
+      try {
+        const jstsPoly1 = _PolygonUtil.polygonToJts(polygon1);
+        const jstsPoly2 = _PolygonUtil.polygonToJts(polygon2);
+        const difference2 = jstsPoly1.difference(jstsPoly2);
+        if (difference2 && difference2.getCoordinates) {
+          const coords = difference2.getCoordinates();
+          const result2 = [];
+          for (let i = 0; i < coords.length - 1; i++) {
+            result2.push(new Vector(coords[i].x, coords[i].y));
+          }
+          return result2;
+        }
+      } catch (error9) {
+        log2.warn("Failed to subtract polygons:", error9);
+      }
+      return polygon1;
     }
   };
 
@@ -12629,24 +12651,956 @@
     }
   };
 
+  // src/ts/impl/solid_landmass_generator.ts
+  var log6 = __toESM(require_loglevel());
+  var SolidLandmassGenerator = class extends WaterGenerator {
+    constructor(integrator, origin, worldDimensions, params, tensorField) {
+      super(integrator, origin, worldDimensions, params, tensorField);
+      this.params = params;
+    }
+    _primaryLandmass = [];
+    _secondaryLandmasses = [];
+    _developableAreas = [];
+    _naturalHarbors = [];
+    get primaryLandmass() {
+      return this._primaryLandmass;
+    }
+    get secondaryLandmasses() {
+      return this._secondaryLandmasses;
+    }
+    get developableAreas() {
+      return this._developableAreas;
+    }
+    get naturalHarbors() {
+      return this._naturalHarbors;
+    }
+    /**
+     * Override the coastline generation to use solid landmass approach
+     */
+    createCoast() {
+      if (this.params.useSolidLandmasses) {
+        this.createSolidLandmasses();
+      } else {
+        super.createCoast();
+      }
+    }
+    createSolidLandmasses() {
+      log6.info("Generating solid landmasses...");
+      this._primaryLandmass = this.generatePrimaryLandmass();
+      this._primaryLandmass = this.addCoastalFeatures(this._primaryLandmass);
+      if (this.params.landmassGeneration.secondaryLandmasses.enabled) {
+        this._secondaryLandmasses = this.generateSecondaryLandmasses();
+      }
+      this._developableAreas = this.identifyDevelopableAreas();
+      this._naturalHarbors = this.createNaturalHarbors();
+      this._seaPolygon = this.generateSeaFromLandmasses();
+      this.updateTensorFieldForLandmasses();
+      this._coastline = this._primaryLandmass.slice();
+      log6.info(`Generated primary landmass with ${this._primaryLandmass.length} points`);
+      log6.info(`Generated ${this._secondaryLandmasses.length} secondary landmasses`);
+      log6.info(`Identified ${this._developableAreas.length} developable areas`);
+      log6.info(`Created ${this._naturalHarbors.length} natural harbors`);
+    }
+    generatePrimaryLandmass() {
+      const centerX = this.worldDimensions.x * 0.5;
+      const centerY = this.worldDimensions.y * 0.5;
+      const center2 = new Vector(centerX, centerY).add(this.origin);
+      switch (this.params.landmassGeneration.landmassType) {
+        case "peninsula":
+          return this.generatePeninsula(center2);
+        case "continent":
+          return this.generateContinent(center2);
+        case "island_chain":
+          return this.generateMainIsland(center2);
+        case "archipelago":
+          return this.generateArchipelagoCore(center2);
+        default:
+          return this.generateContinent(center2);
+      }
+    }
+    generateContinent(center2) {
+      const size3 = this.params.landmassGeneration.primaryLandmassSize;
+      const baseRadius = Math.min(this.worldDimensions.x, this.worldDimensions.y) * size3 * 0.4;
+      const controlPoints = this.generateContinentControlPoints(center2, baseRadius);
+      const roughShape = this.createOrganicShape(controlPoints, baseRadius);
+      return this.extendToWorldEdge(roughShape);
+    }
+    generatePeninsula(center2) {
+      const size3 = this.params.landmassGeneration.primaryLandmassSize;
+      const baseRadius = Math.min(this.worldDimensions.x, this.worldDimensions.y) * size3 * 0.3;
+      const edgeConnection = this.selectRandomWorldEdge();
+      const peninsulaBase = this.createPeninsulaBase(edgeConnection);
+      const peninsulaBody = this.createOrganicShape([center2], baseRadius);
+      return this.connectLandmassShapes(peninsulaBase, peninsulaBody);
+    }
+    generateMainIsland(center2) {
+      const size3 = this.params.landmassGeneration.primaryLandmassSize;
+      const baseRadius = Math.min(this.worldDimensions.x, this.worldDimensions.y) * size3 * 0.35;
+      return this.createOrganicCircle(center2, baseRadius);
+    }
+    generateArchipelagoCore(center2) {
+      const size3 = this.params.landmassGeneration.primaryLandmassSize;
+      const baseRadius = Math.min(this.worldDimensions.x, this.worldDimensions.y) * size3 * 0.3;
+      return this.createOrganicCircle(center2, baseRadius);
+    }
+    generateContinentControlPoints(center2, baseRadius) {
+      const numPoints = 8 + Math.floor(Math.random() * 4);
+      const points = [];
+      for (let i = 0; i < numPoints; i++) {
+        const angle = i / numPoints * Math.PI * 2;
+        const radiusVariation = 0.7 + Math.random() * 0.6;
+        const radius = baseRadius * radiusVariation;
+        const x5 = center2.x + Math.cos(angle) * radius;
+        const y5 = center2.y + Math.sin(angle) * radius;
+        points.push(new Vector(x5, y5));
+      }
+      return points;
+    }
+    createOrganicShape(controlPoints, baseRadius) {
+      if (controlPoints.length === 1) {
+        return this.createOrganicCircle(controlPoints[0], baseRadius);
+      }
+      const hull = this.computeConvexHull(controlPoints);
+      return this.addOrganicVariation(hull, baseRadius * 0.2);
+    }
+    createOrganicCircle(center2, radius) {
+      const points = [];
+      const numSegments = 32 + Math.floor(Math.random() * 16);
+      for (let i = 0; i < numSegments; i++) {
+        const angle = i / numSegments * Math.PI * 2;
+        const radiusVariation = this.getOrganicRadiusVariation(angle, radius);
+        const actualRadius = radius * radiusVariation;
+        const x5 = center2.x + Math.cos(angle) * actualRadius;
+        const y5 = center2.y + Math.sin(angle) * actualRadius;
+        points.push(new Vector(x5, y5));
+      }
+      return points;
+    }
+    getOrganicRadiusVariation(angle, baseRadius) {
+      let variation = 1;
+      variation += Math.sin(angle * 3 + Math.random() * Math.PI) * 0.3;
+      variation += Math.cos(angle * 5 + Math.random() * Math.PI) * 0.2;
+      variation += Math.sin(angle * 8 + Math.random() * Math.PI) * 0.15;
+      variation += Math.cos(angle * 12 + Math.random() * Math.PI) * 0.1;
+      if (this.params.landmassGeneration.coastalComplexity > 0.5) {
+        variation += Math.sin(angle * 20 + Math.random() * Math.PI) * 0.08;
+        variation += Math.cos(angle * 30 + Math.random() * Math.PI) * 0.05;
+      }
+      return Math.max(0.4, Math.min(1.6, variation));
+    }
+    // Placeholder methods - will implement in subsequent phases
+    addCoastalFeatures(landmass) {
+      return landmass;
+    }
+    generateSecondaryLandmasses() {
+      return [];
+    }
+    identifyDevelopableAreas() {
+      return [];
+    }
+    createNaturalHarbors() {
+      return [];
+    }
+    generateSeaFromLandmasses() {
+      const worldBounds = [
+        this.origin.clone(),
+        new Vector(this.origin.x + this.worldDimensions.x, this.origin.y),
+        new Vector(this.origin.x + this.worldDimensions.x, this.origin.y + this.worldDimensions.y),
+        new Vector(this.origin.x, this.origin.y + this.worldDimensions.y)
+      ];
+      try {
+        return PolygonUtil.subtractPolygons(worldBounds, this._primaryLandmass);
+      } catch (error9) {
+        log6.warn("Failed to create sea polygon, using world bounds:", error9);
+        return worldBounds;
+      }
+    }
+    updateTensorFieldForLandmasses() {
+      this.tensorField.sea = this._seaPolygon;
+      if (this.tensorField.setLandmasses) {
+        this.tensorField.setLandmasses([this._primaryLandmass, ...this._secondaryLandmasses]);
+      }
+    }
+    // Helper methods - simplified implementations for Phase 1
+    computeConvexHull(points) {
+      if (points.length < 3) return points;
+      let leftmost = 0;
+      for (let i = 1; i < points.length; i++) {
+        if (points[i].x < points[leftmost].x) {
+          leftmost = i;
+        }
+      }
+      const hull = [];
+      let current = leftmost;
+      do {
+        hull.push(points[current]);
+        let next3 = (current + 1) % points.length;
+        for (let i = 0; i < points.length; i++) {
+          if (this.orientation(points[current], points[i], points[next3]) === 2) {
+            next3 = i;
+          }
+        }
+        current = next3;
+      } while (current !== leftmost);
+      return hull;
+    }
+    orientation(p, q, r) {
+      const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+      if (val === 0) return 0;
+      return val > 0 ? 1 : 2;
+    }
+    addOrganicVariation(polygon, maxVariation) {
+      return polygon.map((point2) => {
+        const variation = (Math.random() - 0.5) * maxVariation;
+        const angle = Math.random() * Math.PI * 2;
+        return point2.clone().add(new Vector(
+          Math.cos(angle) * variation,
+          Math.sin(angle) * variation
+        ));
+      });
+    }
+    extendToWorldEdge(shape) {
+      return shape;
+    }
+    selectRandomWorldEdge() {
+      const edges = ["north", "south", "east", "west"];
+      return edges[Math.floor(Math.random() * edges.length)];
+    }
+    createPeninsulaBase(edge) {
+      const baseWidth = this.worldDimensions.x * 0.3;
+      const baseHeight = this.worldDimensions.y * 0.1;
+      switch (edge) {
+        case "north":
+          return [
+            new Vector(this.origin.x, this.origin.y + this.worldDimensions.y),
+            new Vector(this.origin.x + baseWidth, this.origin.y + this.worldDimensions.y),
+            new Vector(this.origin.x + baseWidth, this.origin.y + this.worldDimensions.y - baseHeight),
+            new Vector(this.origin.x, this.origin.y + this.worldDimensions.y - baseHeight)
+          ];
+        default:
+          return [
+            new Vector(this.origin.x, this.origin.y),
+            new Vector(this.origin.x + baseWidth, this.origin.y),
+            new Vector(this.origin.x + baseWidth, this.origin.y + baseHeight),
+            new Vector(this.origin.x, this.origin.y + baseHeight)
+          ];
+      }
+    }
+    connectLandmassShapes(base, body) {
+      return [...base, ...body];
+    }
+  };
+
+  // src/ts/impl/heightmap_island_generator.ts
+  var log7 = __toESM(require_loglevel());
+
+  // src/ts/impl/diamond_square.ts
+  var DiamondSquare = class {
+    rng;
+    constructor(seed) {
+      if (seed !== void 0) {
+        this.rng = this.seededRandom(seed);
+      } else {
+        this.rng = Math.random;
+      }
+    }
+    /**
+     * Generate heightmap using Diamond-Square algorithm
+     * @param options Generation options
+     * @returns 2D array of heights between -1 and 1
+     */
+    generateHeightmap(options) {
+      const { size: size3, smoothness } = options;
+      if (!this.isPowerOfTwo(size3)) {
+        throw new Error(`Size must be a power of 2, got ${size3}`);
+      }
+      const heightmap = [];
+      for (let i = 0; i <= size3; i++) {
+        heightmap[i] = new Array(size3 + 1).fill(0);
+      }
+      heightmap[0][0] = this.randomValue();
+      heightmap[0][size3] = this.randomValue();
+      heightmap[size3][0] = this.randomValue();
+      heightmap[size3][size3] = this.randomValue();
+      this.diamondSquare(heightmap, size3, smoothness);
+      return heightmap;
+    }
+    diamondSquare(map3, size3, smoothness) {
+      let step = size3;
+      let scale = smoothness;
+      while (step > 1) {
+        const half = step / 2;
+        for (let x5 = half; x5 < size3; x5 += step) {
+          for (let y5 = half; y5 < size3; y5 += step) {
+            const avg = (map3[x5 - half][y5 - half] + map3[x5 + half][y5 - half] + map3[x5 - half][y5 + half] + map3[x5 + half][y5 + half]) / 4;
+            map3[x5][y5] = avg + this.randomValue() * scale;
+          }
+        }
+        for (let x5 = 0; x5 <= size3; x5 += half) {
+          for (let y5 = (x5 + half) % step; y5 <= size3; y5 += step) {
+            const avg = this.getSquareAverage(map3, x5, y5, half, size3);
+            map3[x5][y5] = avg + this.randomValue() * scale;
+          }
+        }
+        step /= 2;
+        scale /= 2;
+      }
+    }
+    getSquareAverage(map3, x5, y5, half, size3) {
+      let sum = 0;
+      let count = 0;
+      const neighbors = [
+        [x5 - half, y5],
+        [x5 + half, y5],
+        [x5, y5 - half],
+        [x5, y5 + half]
+      ];
+      for (const [nx, ny] of neighbors) {
+        if (nx >= 0 && nx <= size3 && ny >= 0 && ny <= size3) {
+          sum += map3[nx][ny];
+          count++;
+        }
+      }
+      return count > 0 ? sum / count : 0;
+    }
+    randomValue() {
+      return (this.rng() - 0.5) * 2;
+    }
+    isPowerOfTwo(n) {
+      return n > 0 && (n & n - 1) === 0;
+    }
+    // Simple seeded random number generator
+    seededRandom(seed) {
+      let state = seed;
+      return () => {
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        return state / 4294967296;
+      };
+    }
+    /**
+     * Normalize heightmap values to specified range
+     */
+    static normalizeHeightmap(heightmap, min2 = 0, max2 = 1) {
+      let minVal = Infinity;
+      let maxVal = -Infinity;
+      for (let x5 = 0; x5 < heightmap.length; x5++) {
+        for (let y5 = 0; y5 < heightmap[x5].length; y5++) {
+          minVal = Math.min(minVal, heightmap[x5][y5]);
+          maxVal = Math.max(maxVal, heightmap[x5][y5]);
+        }
+      }
+      const range2 = maxVal - minVal;
+      if (range2 === 0) return heightmap;
+      const targetRange = max2 - min2;
+      const normalized = [];
+      for (let x5 = 0; x5 < heightmap.length; x5++) {
+        normalized[x5] = [];
+        for (let y5 = 0; y5 < heightmap[x5].length; y5++) {
+          const normalizedValue = (heightmap[x5][y5] - minVal) / range2 * targetRange + min2;
+          normalized[x5][y5] = normalizedValue;
+        }
+      }
+      return normalized;
+    }
+    /**
+     * Apply island mask to make heightmap suitable for islands
+     * Creates much more solid landmasses with minimal water intrusion
+     */
+    static applyIslandMask(heightmap, falloffFactor = 2) {
+      const size3 = heightmap.length - 1;
+      const center2 = size3 / 2;
+      const maxRadius = center2 * 0.9;
+      const masked = [];
+      for (let x5 = 0; x5 < heightmap.length; x5++) {
+        masked[x5] = [];
+        for (let y5 = 0; y5 < heightmap[x5].length; y5++) {
+          const dx2 = x5 - center2;
+          const dy2 = y5 - center2;
+          const distance = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+          const normalizedDistance = distance / maxRadius;
+          let finalHeight;
+          if (normalizedDistance <= 0.7) {
+            const baseHeight = 0.6;
+            const terrainVariation = heightmap[x5][y5] * 0.4;
+            finalHeight = baseHeight + Math.max(0, terrainVariation);
+          } else if (normalizedDistance <= 1) {
+            const falloffZone = (normalizedDistance - 0.7) / 0.3;
+            const falloffMultiplier = Math.max(0, 1 - Math.pow(falloffZone, falloffFactor));
+            const baseHeight = 0.6 * falloffMultiplier;
+            const terrainVariation = heightmap[x5][y5] * 0.3 * falloffMultiplier;
+            finalHeight = baseHeight + Math.max(0, terrainVariation);
+          } else {
+            finalHeight = -0.5;
+          }
+          masked[x5][y5] = finalHeight;
+        }
+      }
+      return masked;
+    }
+  };
+
+  // src/ts/impl/marching_squares.ts
+  var MarchingSquares = class _MarchingSquares {
+    // Marching squares lookup table
+    // Each index represents a 4-bit configuration of corners above/below threshold
+    static EDGE_TABLE = [
+      [],
+      // 0000
+      [[new Vector(0, 0.5), new Vector(0.5, 0)]],
+      // 0001
+      [[new Vector(0.5, 0), new Vector(1, 0.5)]],
+      // 0010
+      [[new Vector(0, 0.5), new Vector(1, 0.5)]],
+      // 0011
+      [[new Vector(1, 0.5), new Vector(0.5, 1)]],
+      // 0100
+      [[new Vector(0, 0.5), new Vector(0.5, 0)], [new Vector(1, 0.5), new Vector(0.5, 1)]],
+      // 0101 (ambiguous)
+      [[new Vector(0.5, 0), new Vector(0.5, 1)]],
+      // 0110
+      [[new Vector(0, 0.5), new Vector(0.5, 1)]],
+      // 0111
+      [[new Vector(0.5, 1), new Vector(0, 0.5)]],
+      // 1000
+      [[new Vector(0.5, 0), new Vector(0.5, 1)]],
+      // 1001
+      [[new Vector(0.5, 1), new Vector(0, 0.5)], [new Vector(0.5, 0), new Vector(1, 0.5)]],
+      // 1010 (ambiguous)
+      [[new Vector(0.5, 0), new Vector(1, 0.5)]],
+      // 1011
+      [[new Vector(1, 0.5), new Vector(0, 0.5)]],
+      // 1100
+      [[new Vector(0.5, 0), new Vector(1, 0.5)]],
+      // 1101
+      [[new Vector(0, 0.5), new Vector(0.5, 0)]],
+      // 1110
+      []
+      // 1111
+    ];
+    /**
+     * Extract contour lines from heightmap at specified threshold
+     */
+    extractContours(heightmap, options) {
+      const { threshold, smoothing = true, minLength = 5 } = options;
+      const segments = this.extractSegments(heightmap, threshold);
+      const contours = this.connectSegments(segments);
+      const filteredContours = contours.filter((contour) => contour.length >= minLength);
+      if (smoothing) {
+        return filteredContours.map((contour) => this.smoothContour(contour));
+      }
+      return filteredContours;
+    }
+    /**
+     * Extract primary coastline (largest contour) from heightmap
+     */
+    extractCoastline(heightmap, threshold) {
+      const contours = this.extractContours(heightmap, { threshold, smoothing: true, minLength: 20 });
+      if (contours.length === 0) {
+        return [];
+      }
+      let bestContour = contours[0];
+      let maxArea = this.calculateContourArea(contours[0]);
+      for (let i = 1; i < contours.length; i++) {
+        const area2 = this.calculateContourArea(contours[i]);
+        if (area2 > maxArea) {
+          maxArea = area2;
+          bestContour = contours[i];
+        }
+      }
+      return bestContour;
+    }
+    extractSegments(heightmap, threshold) {
+      const segments = [];
+      const width4 = heightmap.length - 1;
+      const height4 = heightmap[0].length - 1;
+      for (let x5 = 0; x5 < width4; x5++) {
+        for (let y5 = 0; y5 < height4; y5++) {
+          const config = this.getGridConfiguration(heightmap, x5, y5, threshold);
+          const edgeSegments = _MarchingSquares.EDGE_TABLE[config];
+          for (const edge of edgeSegments) {
+            const start = new Vector(x5 + edge[0].x, y5 + edge[0].y);
+            const end = new Vector(x5 + edge[1].x, y5 + edge[1].y);
+            segments.push({ start, end });
+          }
+        }
+      }
+      return segments;
+    }
+    getGridConfiguration(heightmap, x5, y5, threshold) {
+      let config = 0;
+      if (heightmap[x5][y5] >= threshold) config |= 1;
+      if (heightmap[x5 + 1][y5] >= threshold) config |= 2;
+      if (heightmap[x5 + 1][y5 + 1] >= threshold) config |= 4;
+      if (heightmap[x5][y5 + 1] >= threshold) config |= 8;
+      return config;
+    }
+    connectSegments(segments) {
+      if (segments.length === 0) return [];
+      const contours = [];
+      const used = /* @__PURE__ */ new Set();
+      for (let i = 0; i < segments.length; i++) {
+        if (used.has(i)) continue;
+        const contour = this.buildContour(segments, i, used);
+        if (contour.length > 0) {
+          contours.push(contour);
+        }
+      }
+      return contours;
+    }
+    buildContour(segments, startIndex, used) {
+      const contour = [];
+      const epsilon = 0.01;
+      let currentSegment = segments[startIndex];
+      used.add(startIndex);
+      contour.push(currentSegment.start.clone());
+      contour.push(currentSegment.end.clone());
+      let current = currentSegment.end;
+      let foundConnection = true;
+      while (foundConnection) {
+        foundConnection = false;
+        for (let i = 0; i < segments.length; i++) {
+          if (used.has(i)) continue;
+          const segment = segments[i];
+          if (current.distanceTo(segment.start) < epsilon) {
+            contour.push(segment.end.clone());
+            current = segment.end;
+            used.add(i);
+            foundConnection = true;
+            break;
+          } else if (current.distanceTo(segment.end) < epsilon) {
+            contour.push(segment.start.clone());
+            current = segment.start;
+            used.add(i);
+            foundConnection = true;
+            break;
+          }
+        }
+      }
+      if (contour.length > 2) {
+        const first = contour[0];
+        const last = contour[contour.length - 1];
+        if (first.distanceTo(last) < epsilon * 5) {
+          contour.push(first.clone());
+        }
+      }
+      return contour;
+    }
+    calculateContourLength(contour) {
+      let length2 = 0;
+      for (let i = 0; i < contour.length - 1; i++) {
+        length2 += contour[i].distanceTo(contour[i + 1]);
+      }
+      return length2;
+    }
+    calculateContourArea(contour) {
+      if (contour.length < 3) return 0;
+      let area2 = 0;
+      for (let i = 0; i < contour.length - 1; i++) {
+        area2 += contour[i].x * contour[i + 1].y - contour[i + 1].x * contour[i].y;
+      }
+      if (contour[0].distanceTo(contour[contour.length - 1]) > 0.1) {
+        const last = contour.length - 1;
+        area2 += contour[last].x * contour[0].y - contour[0].x * contour[last].y;
+      }
+      return Math.abs(area2) / 2;
+    }
+    smoothContour(contour) {
+      if (contour.length < 3) return contour;
+      const smoothed = [];
+      const alpha = 0.5;
+      smoothed.push(contour[0].clone());
+      for (let i = 1; i < contour.length - 1; i++) {
+        const prev3 = contour[i - 1];
+        const curr = contour[i];
+        const next3 = contour[i + 1];
+        const smoothedPoint = new Vector(
+          curr.x * (1 - alpha) + (prev3.x + next3.x) * alpha * 0.5,
+          curr.y * (1 - alpha) + (prev3.y + next3.y) * alpha * 0.5
+        );
+        smoothed.push(smoothedPoint);
+      }
+      smoothed.push(contour[contour.length - 1].clone());
+      return smoothed;
+    }
+    /**
+     * Convert heightmap coordinates to world coordinates
+     */
+    static heightmapToWorld(heightmapPoints, center2, heightmapSize, worldScale) {
+      return heightmapPoints.map((point2) => {
+        const worldX = center2.x + (point2.x - heightmapSize / 2) * worldScale;
+        const worldY = center2.y + (point2.y - heightmapSize / 2) * worldScale;
+        return new Vector(worldX, worldY);
+      });
+    }
+    /**
+     * Extract multiple contour levels from heightmap
+     */
+    extractMultipleContours(heightmap, thresholds) {
+      return thresholds.map(
+        (threshold) => this.extractContours(heightmap, { threshold, smoothing: true })
+      );
+    }
+  };
+
+  // src/ts/impl/heightmap_island_generator.ts
+  var HeightmapIslandGenerator = class extends WaterGenerator {
+    _islands = [];
+    diamondSquare;
+    marchingSquares;
+    constructor(integrator, origin, worldDimensions, params, tensorField) {
+      super(integrator, origin, worldDimensions, params, tensorField);
+      this.diamondSquare = new DiamondSquare();
+      this.marchingSquares = new MarchingSquares();
+    }
+    get islands() {
+      return this._islands;
+    }
+    /**
+     * Override createCoast to use heightmap islands when enabled
+     */
+    createCoast() {
+      if (this.params.useHeightmapIslands) {
+        this.createHeightmapIslands();
+      } else {
+        super.createCoast();
+      }
+    }
+    /**
+     * Override createRiver to disable rivers when using heightmap islands
+     * Rivers don't work well with island generation as they expect edge-reaching streamlines
+     */
+    createRiver() {
+      if (this.params.useHeightmapIslands) {
+        this._riverPolygons = [];
+        this._riverSecondaryRoads = [];
+        this.tensorField.river = [];
+        return;
+      } else {
+        super.createRiver();
+      }
+    }
+    createHeightmapIslands() {
+      this._islands = [];
+      this._seaPolygon = this.createFullWorldSea();
+      const { numIslands } = this.params.heightmapIslands;
+      for (let i = 0; i < numIslands; i++) {
+        const island = this.createSingleHeightmapIsland(i);
+        if (island) {
+          this._islands.push(island);
+          this.addIslandToSystem(island, i % 2 === 0);
+        }
+      }
+      this.updateTensorFieldWithIslands();
+    }
+    createSingleHeightmapIsland(islandIndex) {
+      const params = this.params.heightmapIslands;
+      const center2 = this.generateIslandCenter(islandIndex);
+      if (!center2) {
+        log7.warn(`Could not find valid position for island ${islandIndex + 1}`);
+        return null;
+      }
+      const sizeVariation = (Math.random() - 0.5) * 2 * params.sizeVariation;
+      const actualSize = Math.round(params.baseSize * (1 + sizeVariation));
+      const size3 = this.nearestPowerOfTwo(Math.max(64, actualSize));
+      try {
+        const heightmap = this.diamondSquare.generateHeightmap({
+          size: size3,
+          smoothness: params.smoothness,
+          seed: islandIndex * 1337
+          // Deterministic seed per island
+        });
+        let modifiedHeightmap = heightmap;
+        if (params.volcanoMode) {
+          modifiedHeightmap = this.applyVolcanicProfile(modifiedHeightmap);
+        } else if (params.atolloMode) {
+          modifiedHeightmap = this.applyAtollProfile(modifiedHeightmap);
+        }
+        const falloffVariation = 0.9 + Math.random() * 0.2;
+        modifiedHeightmap = DiamondSquare.applyIslandMask(modifiedHeightmap, params.falloffFactor * falloffVariation);
+        modifiedHeightmap = DiamondSquare.normalizeHeightmap(modifiedHeightmap, -1, 1);
+        const features = this.extractIslandFeatures(modifiedHeightmap, center2, params);
+        if (!this.isValidIsland(features)) {
+          log7.warn(`Generated invalid island ${islandIndex + 1}`);
+          return null;
+        }
+        log7.info(`Generated island ${islandIndex + 1} at (${center2.x.toFixed(0)}, ${center2.y.toFixed(0)}) with ${features.coastline.length} coastline points`);
+        return features;
+      } catch (error9) {
+        log7.error(`Failed to generate island ${islandIndex + 1}:`, error9);
+        return null;
+      }
+    }
+    generateIslandCenter(islandIndex) {
+      const attempts = 50;
+      const minDistance = 800;
+      for (let i = 0; i < attempts; i++) {
+        const candidate = new Vector(
+          this.origin.x + Math.random() * this.worldDimensions.x,
+          this.origin.y + Math.random() * this.worldDimensions.y
+        );
+        let validPosition = true;
+        for (const existingIsland of this._islands) {
+          if (candidate.distanceTo(existingIsland.center) < minDistance) {
+            validPosition = false;
+            break;
+          }
+        }
+        if (validPosition) {
+          return candidate;
+        }
+      }
+      return null;
+    }
+    extractIslandFeatures(heightmap, center2, params) {
+      const coastlineHeightmap = this.marchingSquares.extractCoastline(heightmap, params.seaLevel);
+      const coastline = MarchingSquares.heightmapToWorld(coastlineHeightmap, center2, heightmap.length - 1, params.worldScale);
+      const beachThresholds = [
+        params.seaLevel + 0.1,
+        params.seaLevel + 0.2,
+        params.beachLevel
+      ];
+      const beachContoursHeightmap = this.marchingSquares.extractMultipleContours(heightmap, beachThresholds);
+      const beaches = beachContoursHeightmap.map(
+        (contourSet) => contourSet.map(
+          (contour) => MarchingSquares.heightmapToWorld(contour, center2, heightmap.length - 1, params.worldScale)
+        )
+      ).flat();
+      const peaksHeightmap = this.findPeaks(heightmap, 0.6);
+      const peaks = peaksHeightmap.map(
+        (peak) => MarchingSquares.heightmapToWorld([peak], center2, heightmap.length - 1, params.worldScale)[0]
+      );
+      const valleysHeightmap = this.findValleys(heightmap, params.seaLevel + 0.3);
+      const valleys = valleysHeightmap.map(
+        (valley) => MarchingSquares.heightmapToWorld(valley, center2, heightmap.length - 1, params.worldScale)
+      );
+      return {
+        coastline,
+        beaches,
+        peaks,
+        valleys,
+        heightmap,
+        center: center2
+      };
+    }
+    applyVolcanicProfile(heightmap) {
+      const size3 = heightmap.length - 1;
+      const center2 = size3 / 2;
+      const maxRadius = center2 * 0.8;
+      const modified = [];
+      for (let x5 = 0; x5 < heightmap.length; x5++) {
+        modified[x5] = [];
+        for (let y5 = 0; y5 < heightmap[x5].length; y5++) {
+          const dx2 = x5 - center2;
+          const dy2 = y5 - center2;
+          const distance = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+          const normalizedDistance = Math.min(1, distance / maxRadius);
+          const volcanoHeight = Math.pow(1 - normalizedDistance, 1.5) * 0.8;
+          modified[x5][y5] = heightmap[x5][y5] + volcanoHeight;
+        }
+      }
+      return modified;
+    }
+    applyAtollProfile(heightmap) {
+      const size3 = heightmap.length - 1;
+      const center2 = size3 / 2;
+      const innerRadius = center2 * 0.3;
+      const outerRadius = center2 * 0.8;
+      const modified = [];
+      for (let x5 = 0; x5 < heightmap.length; x5++) {
+        modified[x5] = [];
+        for (let y5 = 0; y5 < heightmap[x5].length; y5++) {
+          const dx2 = x5 - center2;
+          const dy2 = y5 - center2;
+          const distance = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+          let heightModification = 0;
+          if (distance >= innerRadius && distance <= outerRadius) {
+            const ringPosition = (distance - innerRadius) / (outerRadius - innerRadius);
+            heightModification = Math.sin(ringPosition * Math.PI) * 0.4;
+          } else if (distance < innerRadius) {
+            const lagoonDepth = (1 - distance / innerRadius) * 0.5;
+            heightModification = -lagoonDepth;
+          }
+          modified[x5][y5] = heightmap[x5][y5] + heightModification;
+        }
+      }
+      return modified;
+    }
+    findPeaks(heightmap, minHeight) {
+      const peaks = [];
+      const width4 = heightmap.length;
+      const height4 = heightmap[0].length;
+      for (let x5 = 1; x5 < width4 - 1; x5++) {
+        for (let y5 = 1; y5 < height4 - 1; y5++) {
+          const elevation = heightmap[x5][y5];
+          if (elevation > minHeight && this.isLocalMaximum(heightmap, x5, y5)) {
+            peaks.push(new Vector(x5, y5));
+          }
+        }
+      }
+      return peaks;
+    }
+    isLocalMaximum(heightmap, x5, y5) {
+      const center2 = heightmap[x5][y5];
+      for (let dx2 = -1; dx2 <= 1; dx2++) {
+        for (let dy2 = -1; dy2 <= 1; dy2++) {
+          if (dx2 === 0 && dy2 === 0) continue;
+          if (x5 + dx2 < 0 || x5 + dx2 >= heightmap.length) continue;
+          if (y5 + dy2 < 0 || y5 + dy2 >= heightmap[0].length) continue;
+          if (heightmap[x5 + dx2][y5 + dy2] >= center2) {
+            return false;
+          }
+        }
+      }
+      return true;
+    }
+    findValleys(heightmap, maxHeight) {
+      const valleys = [];
+      const visited = this.createBooleanGrid(heightmap.length, heightmap[0].length);
+      for (let x5 = 0; x5 < heightmap.length; x5++) {
+        for (let y5 = 0; y5 < heightmap[0].length; y5++) {
+          if (!visited[x5][y5] && heightmap[x5][y5] < maxHeight) {
+            const valley = this.floodFillValley(heightmap, visited, x5, y5, maxHeight);
+            if (valley.length > 5) {
+              valleys.push(valley);
+            }
+          }
+        }
+      }
+      return valleys;
+    }
+    floodFillValley(heightmap, visited, startX, startY, maxHeight) {
+      const valley = [];
+      const stack = [new Vector(startX, startY)];
+      while (stack.length > 0) {
+        const current = stack.pop();
+        const x5 = Math.floor(current.x);
+        const y5 = Math.floor(current.y);
+        if (x5 < 0 || x5 >= heightmap.length || y5 < 0 || y5 >= heightmap[0].length) continue;
+        if (visited[x5][y5] || heightmap[x5][y5] >= maxHeight) continue;
+        visited[x5][y5] = true;
+        valley.push(new Vector(x5, y5));
+        stack.push(new Vector(x5 - 1, y5), new Vector(x5 + 1, y5), new Vector(x5, y5 - 1), new Vector(x5, y5 + 1));
+      }
+      return valley;
+    }
+    createBooleanGrid(width4, height4) {
+      const grid = [];
+      for (let i = 0; i < width4; i++) {
+        grid[i] = new Array(height4).fill(false);
+      }
+      return grid;
+    }
+    addIslandToSystem(island, major) {
+      if (island.coastline.length === 0) return;
+      const simplified = this.simplifyStreamline(island.coastline);
+      this.allStreamlinesSimple.push(simplified);
+      const complex = this.complexifyStreamline(simplified);
+      this.grid(major).addPolyline(complex);
+      this.streamlines(major).push(complex);
+      this.allStreamlines.push(complex);
+    }
+    updateTensorFieldWithIslands() {
+      const islandCoastlines = this._islands.map((island) => island.coastline);
+      this.tensorField.islands = islandCoastlines;
+      this.tensorField.sea = this._seaPolygon;
+    }
+    createFullWorldSea() {
+      return [
+        this.origin.clone(),
+        new Vector(this.origin.x + this.worldDimensions.x, this.origin.y),
+        new Vector(this.origin.x + this.worldDimensions.x, this.origin.y + this.worldDimensions.y),
+        new Vector(this.origin.x, this.origin.y + this.worldDimensions.y)
+      ];
+    }
+    isValidIsland(island) {
+      if (!island.coastline || island.coastline.length < 10) {
+        return false;
+      }
+      const area2 = this.calculatePolygonArea(island.coastline);
+      return area2 > 1e3;
+    }
+    calculatePolygonArea(polygon) {
+      if (polygon.length < 3) return 0;
+      let area2 = 0;
+      for (let i = 0; i < polygon.length; i++) {
+        const j = (i + 1) % polygon.length;
+        area2 += polygon[i].x * polygon[j].y;
+        area2 -= polygon[j].x * polygon[i].y;
+      }
+      return Math.abs(area2) / 2;
+    }
+    nearestPowerOfTwo(n) {
+      return Math.pow(2, Math.round(Math.log2(n)));
+    }
+  };
+
   // src/ts/ui/water_gui.ts
   var WaterGUI = class extends RoadGUI {
     constructor(tensorField, params, integrator, guiFolder, closeTensorFolder, folderName, redraw) {
       super(params, integrator, guiFolder, closeTensorFolder, folderName, redraw);
       this.tensorField = tensorField;
       this.params = params;
-      this.streamlines = new WaterGenerator(
-        this.integrator,
-        this.domainController.origin,
-        this.domainController.worldDimensions,
-        Object.assign({}, this.params),
-        this.tensorField
-      );
+      this.streamlines = this.createWaterGenerator();
     }
     streamlines;
+    createWaterGenerator() {
+      if (this.params.useSolidLandmasses) {
+        return new SolidLandmassGenerator(
+          this.integrator,
+          this.domainController.origin,
+          this.domainController.worldDimensions,
+          Object.assign({}, this.params),
+          this.tensorField
+        );
+      } else if (this.params.useHeightmapIslands) {
+        return new HeightmapIslandGenerator(
+          this.integrator,
+          this.domainController.origin,
+          this.domainController.worldDimensions,
+          Object.assign({}, this.params),
+          this.tensorField
+        );
+      } else {
+        return new WaterGenerator(
+          this.integrator,
+          this.domainController.origin,
+          this.domainController.worldDimensions,
+          Object.assign({}, this.params),
+          this.tensorField
+        );
+      }
+    }
     initFolder() {
       const folder = this.guiFolder.addFolder(this.folderName);
       folder.add({ Generate: () => this.generateRoads() }, "Generate");
+      const islandModeFolder = folder.addFolder("Generation Mode");
+      islandModeFolder.add(this.params, "useSolidLandmasses").name("Solid Landmasses");
+      islandModeFolder.add(this.params, "useHeightmapIslands").name("Heightmap Islands");
+      if (!this.params.heightmapIslands) {
+        this.params.heightmapIslands = {
+          numIslands: 3,
+          baseSize: 256,
+          sizeVariation: 0.3,
+          smoothness: 0.5,
+          seaLevel: 0,
+          beachLevel: 0.1,
+          worldScale: 2,
+          falloffFactor: 2,
+          volcanoMode: false,
+          atolloMode: false
+        };
+      }
+      const heightmapFolder = folder.addFolder("Heightmap Islands");
+      heightmapFolder.add(this.params.heightmapIslands, "numIslands").min(1).max(10).step(1);
+      heightmapFolder.add(this.params.heightmapIslands, "baseSize").min(64).max(512).step(1);
+      heightmapFolder.add(this.params.heightmapIslands, "sizeVariation").min(0).max(1).step(0.1);
+      heightmapFolder.add(this.params.heightmapIslands, "smoothness").min(0.1).max(2).step(0.1);
+      heightmapFolder.add(this.params.heightmapIslands, "seaLevel").min(-1).max(1).step(0.1);
+      heightmapFolder.add(this.params.heightmapIslands, "beachLevel").min(-1).max(1).step(0.1);
+      heightmapFolder.add(this.params.heightmapIslands, "worldScale").min(0.5).max(5).step(0.1);
+      heightmapFolder.add(this.params.heightmapIslands, "falloffFactor").min(0.5).max(5).step(0.1);
+      heightmapFolder.add(this.params.heightmapIslands, "volcanoMode").name("Volcano Mode");
+      heightmapFolder.add(this.params.heightmapIslands, "atolloMode").name("Atoll Mode");
       const coastParamsFolder = folder.addFolder("CoastParams");
       coastParamsFolder.add(this.params.coastNoise, "noiseEnabled");
       coastParamsFolder.add(this.params.coastNoise, "noiseSize");
@@ -12664,13 +13618,7 @@
     generateRoads() {
       this.preGenerateCallback();
       this.domainController.zoom = this.domainController.zoom / Util.DRAW_INFLATE_AMOUNT;
-      this.streamlines = new WaterGenerator(
-        this.integrator,
-        this.domainController.origin,
-        this.domainController.worldDimensions,
-        Object.assign({}, this.params),
-        this.tensorField
-      );
+      this.streamlines = this.createWaterGenerator();
       this.domainController.zoom = this.domainController.zoom * Util.DRAW_INFLATE_AMOUNT;
       this.streamlines.createCoast();
       this.streamlines.createRiver();
@@ -12727,7 +13675,7 @@
   };
 
   // src/ts/impl/polygon_finder.ts
-  var log6 = __toESM(require_loglevel());
+  var log8 = __toESM(require_loglevel());
   var PolygonFinder = class {
     constructor(nodes, params, tensorField) {
       this.nodes = nodes;
@@ -12876,7 +13824,7 @@
         if (index >= 0) {
           current.adj.splice(index, 1);
         } else {
-          log6.error("PolygonFinder - node not in adj");
+          log8.error("PolygonFinder - node not in adj");
         }
       }
     }
@@ -12918,7 +13866,7 @@
   };
 
   // src/ts/ui/style.ts
-  var log7 = __toESM(require_loglevel());
+  var log9 = __toESM(require_loglevel());
 
   // node_modules/@svgdotjs/svg.js/src/utils/methods.js
   var methods = {};
@@ -16846,7 +17794,7 @@
       this._lastRunnerId = runner.id;
       this._runners.push(runnerInfo);
       this._runners.sort((a, b) => a.start - b.start);
-      this._runnerIds = this._runners.map((info2) => info2.runner.id);
+      this._runnerIds = this._runners.map((info4) => info4.runner.id);
       this.updateTime()._continue();
       return this;
     }
@@ -18724,9 +19672,9 @@
     constructor(dragController, colourScheme) {
       this.dragController = dragController;
       this.colourScheme = colourScheme;
-      if (!colourScheme.bgColour) log7.error("ColourScheme Error - bgColour not defined");
-      if (!colourScheme.seaColour) log7.error("ColourScheme Error - seaColour not defined");
-      if (!colourScheme.minorRoadColour) log7.error("ColourScheme Error - minorRoadColour not defined");
+      if (!colourScheme.bgColour) log9.error("ColourScheme Error - bgColour not defined");
+      if (!colourScheme.seaColour) log9.error("ColourScheme Error - seaColour not defined");
+      if (!colourScheme.minorRoadColour) log9.error("ColourScheme Error - minorRoadColour not defined");
       if (!colourScheme.bgColourIn) colourScheme.bgColourIn = colourScheme.bgColour;
       if (!colourScheme.buildingColour) colourScheme.buildingColour = colourScheme.bgColour;
       if (!colourScheme.buildingStroke) colourScheme.buildingStroke = colourScheme.bgColour;
@@ -19157,7 +20105,40 @@
         },
         riverBankSize: 10,
         riverSize: 30,
-        numRivers: 1
+        numRivers: 1,
+        // Island generation parameters
+        useSolidLandmasses: false,
+        useHeightmapIslands: false,
+        heightmapIslands: {
+          numIslands: 3,
+          baseSize: 256,
+          sizeVariation: 0.3,
+          smoothness: 0.5,
+          seaLevel: 0,
+          beachLevel: 0.1,
+          worldScale: 2,
+          falloffFactor: 2,
+          volcanoMode: false,
+          atolloMode: false
+        },
+        landmassGeneration: {
+          landmassType: "continent",
+          primaryLandmassSize: 0.6,
+          coastalComplexity: 0.7,
+          developableAreaRatio: 0.6,
+          naturalFeatures: {
+            bays: { enabled: true, count: 2, depth: 0.3 },
+            peninsulas: { enabled: true, count: 1, length: 0.4 },
+            capes: { enabled: true, count: 3, prominence: 0.2 },
+            inlets: { enabled: false, count: 0, depth: 0.1 }
+          },
+          secondaryLandmasses: {
+            enabled: false,
+            count: 2,
+            sizeRange: [0.1, 0.3],
+            proximityFactor: 0.7
+          }
+        }
       }, this.minorParams);
       this.coastlineParams.pathIterations = 1e4;
       this.coastlineParams.simplifyTolerance = 10;
@@ -19671,7 +20652,7 @@
   };
 
   // src/ts/model_generator.ts
-  var log8 = __toESM(require_loglevel());
+  var log10 = __toESM(require_loglevel());
 
   // node_modules/three/build/three.core.js
   var REVISION = "179";
@@ -27239,12 +28220,12 @@
         object.sortObjects = this.sortObjects;
         object.drawRanges = this._drawRanges;
         object.reservedRanges = this._reservedRanges;
-        object.geometryInfo = this._geometryInfo.map((info2) => ({
-          ...info2,
-          boundingBox: info2.boundingBox ? info2.boundingBox.toJSON() : void 0,
-          boundingSphere: info2.boundingSphere ? info2.boundingSphere.toJSON() : void 0
+        object.geometryInfo = this._geometryInfo.map((info4) => ({
+          ...info4,
+          boundingBox: info4.boundingBox ? info4.boundingBox.toJSON() : void 0,
+          boundingSphere: info4.boundingSphere ? info4.boundingSphere.toJSON() : void 0
         }));
-        object.instanceInfo = this._instanceInfo.map((info2) => ({ ...info2 }));
+        object.instanceInfo = this._instanceInfo.map((info4) => ({ ...info4 }));
         object.availableInstanceIds = this._availableInstanceIds.slice();
         object.availableGeometryIds = this._availableGeometryIds.slice();
         object.nextIndexStart = this._nextIndexStart;
@@ -35798,7 +36779,7 @@
     }
     setState(s) {
       this.state = s;
-      log8.info(ModelGeneratorStates[s]);
+      log10.info(ModelGeneratorStates[s]);
     }
     /**
      * Return true if processing a model
@@ -35934,7 +36915,7 @@
      */
     polygonToMesh(polygon, height4) {
       if (polygon.length < 3) {
-        log8.error("Tried to export empty polygon as OBJ");
+        log10.error("Tried to export empty polygon as OBJ");
         return null;
       }
       const shape = new Shape2();
@@ -36210,7 +37191,7 @@
       requestAnimationFrame(this.update.bind(this));
     }
   };
-  window.log = log9;
+  window.log = log11;
   window.addEventListener("load", () => {
     new Main();
   });

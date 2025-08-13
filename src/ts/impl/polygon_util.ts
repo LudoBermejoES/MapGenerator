@@ -219,4 +219,32 @@ export default class PolygonUtil {
         }
         return outP;
     }
+
+    /**
+     * Subtracts polygon2 from polygon1, returning the difference
+     * Used for creating sea polygons by subtracting landmasses from world bounds
+     */
+    public static subtractPolygons(polygon1: Vector[], polygon2: Vector[]): Vector[] {
+        try {
+            const jstsPoly1 = PolygonUtil.polygonToJts(polygon1);
+            const jstsPoly2 = PolygonUtil.polygonToJts(polygon2);
+            
+            const difference = jstsPoly1.difference(jstsPoly2);
+            
+            // Convert back to Vector array
+            if (difference && difference.getCoordinates) {
+                const coords = difference.getCoordinates();
+                const result = [];
+                for (let i = 0; i < coords.length - 1; i++) { // -1 to skip duplicate closing point
+                    result.push(new Vector(coords[i].x, coords[i].y));
+                }
+                return result;
+            }
+        } catch (error) {
+            log.warn('Failed to subtract polygons:', error);
+        }
+        
+        // Fallback: return original polygon1 if subtraction fails
+        return polygon1;
+    }
 }
